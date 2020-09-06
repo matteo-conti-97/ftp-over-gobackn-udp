@@ -9,10 +9,118 @@
 #include <fcntl.h>
 #define SERV_PORT 5192
 #define MAXLINE 1024
+#define PUT 1
+#define GET 2
+#define LIST 3
+#define EXIT 4
+
+void put(int sockfd){
+  int fd, n, command=1;
+  char buff[MAXLINE];
+  memset(buff,0,sizeof(buff));
+  /* Invia al server il pacchetto di richiesta*/
+  if (send(sockfd, &command, sizeof(int), 0) < 0) {
+    perror("errore in send");
+    exit(-1);
+  }
+  fd=open("imgPiccola.jpg",O_RDONLY);
+  while((n = read(fd, buff, MAXLINE))>0)
+  {
+    //usleep(1000);
+    if (send(sockfd, buff, n, 0) < 0)
+    {
+      perror("errore in send");
+      exit(-1);
+    }
+    memset(buff,0,sizeof(buff));
+  }
+  printf("\nPUT terminata\n\n");
+  send(sockfd, "End", strlen("End"), 0);
+  close(fd);
+}
+
+void get(int sockfd){
+  int n, fd, command=2;
+  char buff[MAXLINE];
+    /* Invia al server il pacchetto di richiesta*/
+  if (send(sockfd, &command, sizeof(int), 0) < 0) {
+    perror("errore in send");
+    exit(-1);
+  }
+  //apro file
+  fd = open("prova1.jpg", O_RDWR | O_CREAT| O_TRUNC, 0666);
+
+   while((n = recv(sockfd, buff, MAXLINE, 0))) {
+        buff[n] = 0;
+        if (!(strcmp(buff, "End"))) {
+            break;
+        }
+        write(fd, buff, n);
+    }
+  printf("\nGET terminata\n\n");
+  close(fd);
+}
+
+void list(int sockfd){
+  int n, fd, command=3;
+  char buff[MAXLINE];
+    /* Invia al server il pacchetto di richiesta*/
+  if (send(sockfd, &command, sizeof(int), 0) < 0) {
+    perror("errore in send");
+    exit(-1);
+  }
+  printf("Lista dei file su server:\n\n");
+  //listo file
+   while((n = recv(sockfd, buff, MAXLINE, 0))) {
+        buff[n] = 0;
+        if (!(strcmp(buff, "End"))) {
+            break;
+        }
+        printf("%s\n", buff);
+    }
+  printf("\nLIST terminata\n\n");
+}
+
+void choice(int sockfd){
+  int n;
+  printf("Cosa posso fare per te?\n");
+  printf("1)PUT\n");
+  printf("2)GET\n");
+  printf("3)LIST\n");
+  printf("4)EXIT\n");
+  printf("Inserisci il numero dell'operazione da eseguire\n");
+  selectOpt:
+  if(scanf("%d",&n)!=1){
+    perror("errore acquisizione operazione da eseguire");
+    exit(1);
+  }
+  switch(n){
+    case PUT:
+      system("clear");
+      put(sockfd);
+      break;
+    case GET:
+      system("clear");
+      get(sockfd);
+      break;
+    case LIST:
+      system("clear");
+      list(sockfd);
+      break;
+    case EXIT:
+      system("clear");
+      close(sockfd);
+      exit(0);
+    default:
+      printf("Inserisci un numero valido\n");
+      goto selectOpt;
+      break;
+  }
+}
 
 int main(int argc, char *argv[ ]){
   int sockfd, fd, n, len;
-  char recvline[MAXLINE];
+  char buff[MAXLINE];
   struct sockaddr_in servaddr;
   if (argc != 2) { /* controlla numero degli argomenti */
     fprintf(stderr, "utilizzo: daytime_clientUDP <indirizzo IP server>\n");
@@ -22,6 +130,15 @@ int main(int argc, char *argv[ ]){
     perror("errore in socket");
     exit(-1);
   }
+  //Buffer extension
+  /*int a = 65535;
+  if (setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &a, sizeof(int)) == -1) {
+    perror("errore resize buffer ricezione");
+  }
+  if (setsockopt(sockfd, SOL_SOCKET, SO_SNDBUF, &a, sizeof(int)) == -1) {
+    perror("errore resize buffer ricezione");
+  }*/
+
   memset((void *)&servaddr, 0, sizeof(servaddr));
   /* azzera servaddr */
   servaddr.sin_family = AF_INET;
@@ -34,24 +151,15 @@ int main(int argc, char *argv[ ]){
     perror("errore in inet_pton");
     exit(-1);
   }
-  len=sizeof(servaddr);
-    /* Invia al server il pacchetto di richiesta*/
-  if (sendto(sockfd, NULL, 0, 0, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0) {
-    perror("errore in sendto");
+  /* stabilisce la connessione con il server */
+  if (connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0) {
+    perror("errore in connect");
     exit(-1);
   }
-  //apro file
-  fd = open("prova1.jpg", O_RDWR | O_CREAT, 0666);
-
-   while((n = recvfrom(sockfd, recvline, MAXLINE, 0, (struct sockaddr *) &servaddr, &len))) {
-        recvline[n] = 0;
-        if (!(strcmp(recvline, "End"))) {
-            break;
-        }
-        write(fd, recvline, n);
-    }
-  printf("Ho finito di ricevere\n");
-  close(fd);
+  printf("Ti sei connesso con successo al server\n");
+  while(1){
+  choice(sockfd);
+  }
   close(sockfd);
   exit(0);
 }
