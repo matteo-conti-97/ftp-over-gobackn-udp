@@ -170,6 +170,7 @@ void get(int sockfd){
     /* Invia al server il pacchetto di richiesta*/
   if (send(sockfd, &command, sizeof(int), 0) < 0) {
     perror("errore in send");
+    system("rm prova1.jpg");
     exit(-1);
   }
 
