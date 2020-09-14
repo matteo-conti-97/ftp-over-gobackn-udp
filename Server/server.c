@@ -12,17 +12,37 @@
 #include <sys/wait.h>
 
 #define SERV_PORT 4444
-#define MAXLINE 1024
-#define PUT 1
-#define GET 2
-#define LIST 3
-#define EXIT 4
+#define MAXLINE 512
+#define PUT 11
+#define GET 12
+#define LIST 13
+#define EXIT 14
+
+struct segmentPacket {
+    int type;
+    int seq_no;
+    int length;
+    char data[MAXLINE];
+};
+
+struct ACKPacket {
+    int type;
+    int ack_no;
+};
+
+bool lost_packet(float loss_rate);
+
+struct ack_packet make_ack_packet (int ack_type, int base);
+
+void print_error(char *error);
 
 typedef void Sigfunc(int); 
 
 Sigfunc* signal(int signum, Sigfunc *handler);
 
 void sig_child_handler(int signum);
+
+void sig_alrm_handler(int signum);
 
 void get(int sockfd, struct sockaddr_in addr);
 
@@ -35,6 +55,7 @@ int main(int argc, char *argv[ ]){
   int sockfd, child_sockfd, len, child_len, command, child_port;
   struct sockaddr_in addr, child_addr;
   pid_t pid;
+  struct sigaction sa;
 
   if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { /* crea il socket */
     perror("errore in socket padre");
@@ -61,10 +82,15 @@ int main(int argc, char *argv[ ]){
     exit(EXIT_FAILURE);
   }
 
-  if (signal(SIGCHLD, sig_child_handler) == SIG_ERR) { 
-    fprintf(stderr, "errore in signal");
-    exit(1);
-  }
+  if (signal(SIGCHLD, sig_child_handler) == SIG_ERR)
+    print_error("Errore sigaction");
+
+  sa.sa_handler = sig_alrm_handler; /* installa il gestore del segnale */
+  sa.sa_flags = 0;
+  sigemptyset(&sa.sa_mask);
+  if (sigaction(SIGALRM, &sa, NULL) < 0) 
+    print_error("Errore sigaction");
+
 
   while (1) {
     //Ascolto di richieste di connessione dei client
@@ -228,5 +254,36 @@ void list(int sockfd, struct sockaddr_in addr){
   printf("Ho finito di inviare\n");
   sendto(sockfd, "End", strlen("End"), 0, (struct sockaddr *) &addr, sizeof(addr));
   closedir(d);
+}
+
+void print_error(char *error){
+  perror(error);
+  exit(EXIT_FAILURE);
+}
+
+struct ack_packet make_ack_packet (int ack_type, int base){
+        struct ack_packet ack;
+        ack.type = ack_type;
+        ack.ack_no = base;
+        return ack;
+}
+
+struct segment_packet make_request_packet(int command){
+  struct segment_packet packet;
+  pkt.type = command;
+  pkt.seq_no = 0;
+  memset(pkt.data, 0, sizeof(pkt.data));
+  return packet;
+}
+
+bool lost_packet(float loss_rate){
+    double rv;
+    rv = drand48();
+    if (rv < loss_rate)
+    {
+        return true;
+    } else {
+        return false;
+    }
 }
     
