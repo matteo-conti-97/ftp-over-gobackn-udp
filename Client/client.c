@@ -10,31 +10,35 @@
 #include <stdbool.h>
 #include <signal.h>
 
-#define LOSS 0.3
+#define NORMAL_DATA 5
+#define FINAL_DATA 6
+#define NORMAL_ACK 7
+#define FINAL_ACK 8
+#define LOSS 0.05
 #define WIN_SIZE 4
-#define TIMER 10
+#define TIMER 2
 #define SERV_PORT 4444
-#define MAXLINE 512
-#define PUT 11
-#define GET 12
-#define LIST 13
-#define EXIT 14
+#define MAXLINE 497
+#define PUT 1
+#define GET 2
+#define LIST 3
+#define EXIT 4
 
 struct segment_packet {
     int type;
-    int seq_no;
+    unsigned long seq_no;
     int length;
     char data[MAXLINE];
 };
 
 struct ack_packet {
     int type;
-    int ack_no;
+    unsigned long seq_no;
 };
 
-bool lost_packet(float loss_rate);
+bool simulate_loss(float loss_rate);
 
-struct ack_packet make_ack_packet (int ack_type, int base);
+struct ack_packet make_ack_packet (int ack_type, unsigned long base);
 
 struct segment_packet make_request_packet(int command);
 
@@ -44,11 +48,13 @@ void sig_alrm_handler(int signum);
 
 void put(int sockfd);
 
-void get(int sockfd);
+void get(int sockfd, int timer, float loss_rate);
 
 void list(int sockfd);
 
 void choice(int sockfd);
+
+void new_get(int sockfd, int timer, float loss_rate);
 
 int main(int argc, char *argv[]){
   int sockfd, fd, n, len, new_port;
@@ -60,6 +66,10 @@ int main(int argc, char *argv[]){
     fprintf(stderr, "utilizzo: client <indirizzo IP server>\n");
     exit(1);
   }
+
+  //random seed per la perdita simulata
+  srand48(2345);
+
   if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { /* crea il socket */
     perror("errore in socket");
     exit(EXIT_FAILURE);
@@ -87,11 +97,14 @@ int main(int argc, char *argv[]){
     exit(EXIT_FAILURE);
   }
 
-  sa.sa_handler = sig_alrm_handler; /* installa il gestore del segnale */
+  sa.sa_handler = sig_alrm_handler;
+  /* installa il gestore del segnale */
   sa.sa_flags = 0;
   sigemptyset(&sa.sa_mask);
-  if (sigaction(SIGALRM, &sa, NULL) < 0) 
-    print_error("Errore sigaction");
+  if (sigaction(SIGALRM, &sa, NULL) < 0) {
+    fprintf(stderr, "errore in sigaction");
+    exit(EXIT_FAILURE);
+  }
 
   /* stabilisce la connessione con il server */
   if (connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0) {
@@ -155,7 +168,7 @@ void choice(int sockfd){
       break;
     case GET:
       //system("clear");
-      get(sockfd);
+      get(sockfd, TIMER, LOSS);
       break;
     case LIST:
       //system("clear");
@@ -171,103 +184,6 @@ void choice(int sockfd){
       goto selectOpt;
       break;
   }
-}
-
-//void new_get(int sockfd, float loss_rate, int timer){
-void new_get(int sockfd){
-  struct segment_packet data_packet;
-  struct ack_packet ack;          
-  int recv_msg_size, trial_counter, fd, base=-2, seq_number=0;
-
-  //Apro file
-  if((fd = open("prova1.jpg", O_RDWR | O_CREAT| O_TRUNC, 0666))<0){
-    perror("errore apertura/creazione file da ricevere");
-    exit(EXIT_FAILURE);
-  }
-
-  data_packet=make_request_packet(GET);
-  // Invio richiesta get
-  get_request:
-  if (send(sockfd, &data_packet, sizeof(data_packet), 0) != sizeof(data_packet))
-        print_error("Comportamento inaspettato send");
-   //alarm(timer);
-   alarm(TIMER);
-
-  //Attendo ack richiesta
-  while (recv(sockfd, &ack, sizeof(ack), 0) < 0){
-    //Timeout richiesta
-    if (errno == EINTR){ 
-      //Controllo quante volte e' fallito eventualmente evito di perdere ancora tempo
-      if(trial_counter >= 10){
-          printf("Impossibile eseguire operazione, tentativi di richiesta esauriti\n");
-          exit(EXIT_FAILURE);
-      }
-      //Ritento
-      else{
-        alarm(0);
-        trial_counter++;
-        goto get_request;
-      }
-    }
-  }
-
-  while(1){
-    // aspetto dati dal server
-    if ((recv_msg_size = recv(sockfd, &data_packet, sizeof(data_packet), 0)) < 0)
-      print_error("recv() failed");
-    
-    seq_number = data_packet.seq_no;
-
-    
-    //if(!lost_packet(loss_rate)){
-    if(!lost_packet(LOSS)){
-        //Segmento iniziale
-        if(data_packet.seq_no == 0 && data_packet.type == 1){
-            printf("Ricevuto segmento iniziale\n");
-            write(fd, data_packet.data, sizeof(data_packet.data));
-            base = 0;
-            ack = make_ack_packet(2, base);
-        } 
-
-        //E' arrivato un segmento in ordine con numero di sequenza maggiore della base
-        else if (data_packet.seq_no == base + 1){ 
-            printf("Ricevuto segmento successivo alla base, numero:%d\n", data_packet.seq_no);
-            write(fd, data_packet.data, sizeof(data_packet.data));
-            base = data_packet.seq_no;
-            ack = make_ack_packet(2, base);
-        }
-
-        else if (data_packet.type == 1 && data_packet.seq_no != base + 1){
-            //E' arrivato un segmento fuori ordine
-            printf("Ricevuto segmento fuori ordine, numero:%d\n", data_packet.seq_no);
-            //Invio ack base
-            ack = make_ack_packet(2, base);
-        }
-
-        //Ho ricevuto il pacchetto finale (tipo 4)
-        if(data_packet.type == 4 && seq_number == base ){
-            base = -1;
-            //Crea ack finale (tipo 8)
-            ack = make_ack_packet(8, base);
-        }
-
-        //Invio ack per i pacchetti ricevuti
-        if(base >= 0){
-            printf("Invio ACK numero:%d\n", base);
-            if (send(sockfd, &ack, sizeof(ack), 0) != sizeof(ack))
-                print_error("Comportamento inaspettato send");
-        } else if (base == -1) {
-            printf("Ricevuto segmento finale\n");
-            printf("Invio ack finale, numero:%d\n", base);
-            if (send(sockfd, &ack, sizeof(ack), 0) != sizeof(ack))
-                print_error("Comportamento inaspettato send");
-        }
-
-    } else {
-        printf("Perdita simulata\n");
-    }
-  }
-  close(fd);
 }
 
 void list(int sockfd){
@@ -290,10 +206,15 @@ void list(int sockfd){
   printf("\nLIST terminata\n\n");
 }
 
-void get(int sockfd){
-  int n, fd, command=2;
-  char buff[MAXLINE];
+void get(int sockfd, int timer, float loss_rate){
+  int n, fd,  command=2;
+  struct segment_packet data;
+  struct ack_packet ack;
+  unsigned long expected_seq_no=0;
 
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  ack.seq_no=-1;
     //apro file
   if((fd = open("prova1.jpg", O_RDWR | O_CREAT| O_TRUNC, 0666))<0){
     perror("errore apertura/creazione file da ricevere");
@@ -303,19 +224,46 @@ void get(int sockfd){
     /* Invia al server il pacchetto di richiesta*/
   if (send(sockfd, &command, sizeof(int), 0) < 0) {
     perror("errore in send");
-    system("rm prova1.jpg");
     exit(-1);
   }
 
-   while((n = recv(sockfd, buff, MAXLINE, 0))) {
-        buff[n] = 0;
-        if (!(strcmp(buff, "End"))) {
-            break;
-        }
-        write(fd, buff, n);
+  while(1){
+    if(recv(sockfd, &data, sizeof(data), 0)!=sizeof(data)){
+      perror("Pacchetto corrotto errore recv\n");
     }
-  printf("\nGET terminata\n\n");
+    if(!simulate_loss(loss_rate)){
+      //Se arriva un pacchetto in ordine lo riscontro e aggiorno il numero di sequenza che mi aspetto
+      if(data.seq_no==expected_seq_no){
+        if(data.type==FINAL_DATA){
+          printf("Ho ricevuto dato finale\n");
+          ack=make_ack_packet(FINAL_ACK,data.seq_no);
+          break;
+        }
+        else{
+          data.data[data.length]=0;
+          printf("Ho ricevuto un dato di %d byte\n", data.length);
+          if((n=write(fd, data.data, data.length))!=data.length){
+            perror("Non ho scritto tutto su file errore");
+          }
+          printf("Ho scritto %d byte sul file\n",n);
+          ack=make_ack_packet(NORMAL_ACK,data.seq_no);
+          expected_seq_no++;
+        }
+      }
+      //Se arriva un pacchetto fuori ordine o corrotto invio l'ack della precedente iterazione
+
+      //Invio ack
+      send(sockfd, &ack, sizeof(ack), 0);
+
+   //}
+    else
+      printf("PERDITA PACCHETTO SIMULATA\n");
+  } 
+
+  //Invio ack finale
+  send(sockfd, &ack, sizeof(ack), 0);
   close(fd);
+  printf("\nGET terminata\n\n");
 }
 
 void put(int sockfd){
@@ -355,10 +303,10 @@ void print_error(char *error){
   exit(EXIT_FAILURE);
 }
 
-struct ack_packet make_ack_packet (int ack_type, int base){
+struct ack_packet make_ack_packet (int ack_type, unsigned long base){
         struct ack_packet ack;
         ack.type = ack_type;
-        ack.ack_no = base;
+        ack.seq_no = base;
         return ack;
 }
 
@@ -370,7 +318,7 @@ struct segment_packet make_request_packet(int command){
   return packet;
 }
 
-bool lost_packet(float loss_rate){
+bool simulate_loss(float loss_rate){
     double rv;
     rv = drand48();
     if (rv < loss_rate)
@@ -382,4 +330,6 @@ bool lost_packet(float loss_rate){
 }
 
 void sig_alrm_handler(int signum){
+  printf("SIGALRM\n");
+
 }

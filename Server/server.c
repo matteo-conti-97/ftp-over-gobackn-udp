@@ -10,29 +10,43 @@
 #include <dirent.h> 
 #include <signal.h>
 #include <sys/wait.h>
+#include <stdbool.h>
 
+#define NORMAL_DATA 5 
+#define FINAL_DATA 6
+#define NORMAL_ACK 7
+#define FINAL_ACK 8
+#define LOSS 0.05
+#define WIN_SIZE 4
+#define TIMER 2
 #define SERV_PORT 4444
-#define MAXLINE 512
-#define PUT 11
-#define GET 12
-#define LIST 13
-#define EXIT 14
+#define MAXLINE 497
+#define PUT 1
+#define GET 2
+#define LIST 3
+#define EXIT 4
 
-struct segmentPacket {
+bool timeout_event=false;
+
+struct segment_packet {
     int type;
-    int seq_no;
+    unsigned long seq_no;
     int length;
     char data[MAXLINE];
 };
 
-struct ACKPacket {
+struct ack_packet {
     int type;
-    int ack_no;
+    unsigned long seq_no;
 };
 
-bool lost_packet(float loss_rate);
+bool simulate_loss(float loss_rate);
 
-struct ack_packet make_ack_packet (int ack_type, int base);
+struct ack_packet make_ack_packet (int ack_type, unsigned long base);
+
+struct segment_packet make_data_packet(unsigned long seq_no, int length, char* data);
+
+struct segment_packet make_terminal_packet(unsigned long seq_no, int length);
 
 void print_error(char *error);
 
@@ -44,7 +58,7 @@ void sig_child_handler(int signum);
 
 void sig_alrm_handler(int signum);
 
-void get(int sockfd, struct sockaddr_in addr);
+void get(int sockfd, struct sockaddr_in addr, int timer, int window_size, float loss_rate);
 
 void put(int sockfd, struct sockaddr_in addr);
 
@@ -56,6 +70,9 @@ int main(int argc, char *argv[ ]){
   struct sockaddr_in addr, child_addr;
   pid_t pid;
   struct sigaction sa;
+
+  //random seed per la perdita simulata
+  srand48(2345);
 
   if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { /* crea il socket */
     perror("errore in socket padre");
@@ -82,15 +99,19 @@ int main(int argc, char *argv[ ]){
     exit(EXIT_FAILURE);
   }
 
-  if (signal(SIGCHLD, sig_child_handler) == SIG_ERR)
-    print_error("Errore sigaction");
+  if (signal(SIGCHLD, sig_child_handler) == SIG_ERR) { 
+    fprintf(stderr, "errore in signal");
+    exit(1);
+  }
 
-  sa.sa_handler = sig_alrm_handler; /* installa il gestore del segnale */
+  sa.sa_handler = sig_alrm_handler;
+  /* installa il gestore del segnale */
   sa.sa_flags = 0;
   sigemptyset(&sa.sa_mask);
-  if (sigaction(SIGALRM, &sa, NULL) < 0) 
-    print_error("Errore sigaction");
-
+  if (sigaction(SIGALRM, &sa, NULL) < 0) {
+    fprintf(stderr, "errore in sigaction");
+    exit(EXIT_FAILURE);
+  }
 
   while (1) {
     //Ascolto di richieste di connessione dei client
@@ -143,7 +164,7 @@ int main(int argc, char *argv[ ]){
             break;
           case GET:
             //printf("Ho ricevuto il comando get %d\n",command);
-            get(child_sockfd, child_addr);
+            get(child_sockfd, child_addr, TIMER, WIN_SIZE, LOSS);
             break;
           case LIST:
             //printf("Ho ricevuto il comando list %d\n",command);
@@ -189,28 +210,85 @@ void sig_child_handler(int signum){
   return;
 }
 
-void get(int sockfd, struct sockaddr_in addr){
-  int fd,n;
-  char buff[MAXLINE];
-  memset(buff,0,sizeof(buff));
+void get(int sockfd, struct sockaddr_in addr, int timer, int window_size, float loss_rate){
+  int fd,n, addr_len=sizeof(addr);
+  struct segment_packet data;
+  struct ack_packet ack;
+  struct segment_packet *packet_buffer;
+  unsigned long base=0,next_seq_no=0, file_size;
+
+  if((packet_buffer=malloc(window_size*sizeof(struct segment_packet)))==NULL){
+    perror("malloc fallita");
+    exit(EXIT_FAILURE);
+  }
+
+  memset(packet_buffer,0,sizeof(packet_buffer));
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  ack.seq_no=-1;
 
   if((fd=open("./files/imgPiccola.jpg",O_RDONLY))<0){
     perror("errore apertura file da inviare");
     exit(EXIT_FAILURE);
   }
 
-  while((n = read(fd, buff, MAXLINE))>0)
-  {
-    //usleep(1000);
-    if (sendto(sockfd, buff, n, 0, (struct sockaddr *)&addr, sizeof(addr)) < 0)
-    {
-      perror("errore in sendto");
-      exit(EXIT_FAILURE);
+  //Calcolo dimensione file
+  lseek(fd, 0, SEEK_SET);
+  file_size = lseek(fd, 0, SEEK_END);
+  lseek(fd, 0, SEEK_SET);
+
+  while((ack.seq_no+1)*497 < file_size){
+
+    if(timeout_event){
+      alarm(timer);
+      for(int i=0; i<window_size; i++){
+          sendto(sockfd, &packet_buffer[i],sizeof(packet_buffer[i]), 0, (struct sockaddr *) &addr, sizeof(addr));
+          //Mettere rtt e timer dinamico
+      }
+      timeout_event=false;
+    }    
+    //Se la finestra non e' piena preparo ed invio il pacchetto
+    if(next_seq_no < base+window_size){ 
+      if((packet_buffer[next_seq_no%window_size].length = read(fd, packet_buffer[next_seq_no%window_size].data, MAXLINE)) > 0){
+        packet_buffer[next_seq_no%window_size].seq_no = next_seq_no;
+        sendto(sockfd, &packet_buffer[next_seq_no%window_size], sizeof(packet_buffer[next_seq_no%window_size]), 0, (struct sockaddr *) &addr, sizeof(addr));
+        //Lancia il conteggio dell'rtt
+        if(base == next_seq_no){
+          //Lancia il timer
+          alarm(timer);
+          printf("Ho lanciato il timer\n");
+        }
+        next_seq_no++;
+      }
     }
-    memset(buff,0,sizeof(buff));
+
+    //Attendo gli ack
+    if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len) > 0){ 
+      if(!simulate_loss(loss_rate)){
+        base = ack.seq_no;
+        //Ferma conteggio rtt  
+        if(base == next_seq_no){
+          alarm(0);
+          printf("Ho fermato il timer\n");
+        }
+      //}
+      else
+        printf("PERDITA ACK SIMULATA\n");
+      
+    }         
   }
-  printf("Ho finito di inviare\n");
-  sendto(sockfd, "End", strlen("End"), 0, (struct sockaddr *) &addr, sizeof(addr));
+
+
+  data.type=FINAL_DATA;
+  data.seq_no=next_seq_no;
+  sendto(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, sizeof(addr));
+  printf("Inviato dato finale\n");
+  alarm(timer);
+  recvfrom(sockfd, &ack, sizeof(struct ack_packet),0, (struct sockaddr *) &addr, &addr_len);
+  if(ack.type==FINAL_ACK){
+    printf("Ho ricevuto ack finale\n");
+    alarm(0);
+  }
   close(fd);
 }
 
@@ -261,22 +339,19 @@ void print_error(char *error){
   exit(EXIT_FAILURE);
 }
 
-struct ack_packet make_ack_packet (int ack_type, int base){
+struct ack_packet make_ack_packet (int ack_type, unsigned long base){
         struct ack_packet ack;
         ack.type = ack_type;
-        ack.ack_no = base;
+        ack.seq_no = base;
         return ack;
 }
 
-struct segment_packet make_request_packet(int command){
-  struct segment_packet packet;
-  pkt.type = command;
-  pkt.seq_no = 0;
-  memset(pkt.data, 0, sizeof(pkt.data));
-  return packet;
+void sig_alrm_handler(int signum){
+   printf("SIGALRM\n");
+   timeout_event=true;
 }
 
-bool lost_packet(float loss_rate){
+bool simulate_loss(float loss_rate){
     double rv;
     rv = drand48();
     if (rv < loss_rate)
@@ -285,5 +360,29 @@ bool lost_packet(float loss_rate){
     } else {
         return false;
     }
+} 
+
+struct segment_packet make_data_packet (unsigned long seq_no, int length, char* data){
+
+    struct segment_packet packet;
+
+    packet.type = NORMAL_DATA;
+    packet.seq_no = seq_no;
+    packet.length = length;
+    memset(packet.data, 0, sizeof(packet.data));
+    strcpy(packet.data, data);
+
+    return packet;
 }
-    
+
+struct segment_packet make_terminal_packet (unsigned long seq_no, int length){
+
+    struct segment_packet packet;
+
+    packet.type = FINAL_DATA;
+    packet.seq_no = seq_no;
+    packet.length = 0;
+    memset(packet.data, 0, sizeof(packet.data));
+
+    return packet;
+}
