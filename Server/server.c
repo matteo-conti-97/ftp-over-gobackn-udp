@@ -55,6 +55,8 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
 
 void set_timer(long timer);
 
+void new_put(int sockfd, struct sockaddr_in addr, long timer, float loss_rate, char *file_name);
+
 
 int main(int argc, char *argv[]){
   int sockfd, child_sockfd, serv_port, window_size, len, child_len;
@@ -208,7 +210,13 @@ int main(int argc, char *argv[]){
             alarm(0);
             timeout_event=false;
             //printf("Ho ricevuto il comando put %d\n",command);
-            put(child_sockfd, child_addr);
+            //put(child_sockfd, child_addr);
+            ack.type=PUT;
+            if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))!=sizeof(ack)){
+              perror("errore sendto ack comando");
+              exit(EXIT_FAILURE);
+            }
+            new_put(child_sockfd, child_addr, timer, loss_rate, data.data);
             break;
           case GET:
             alarm(0);
@@ -244,8 +252,6 @@ int main(int argc, char *argv[]){
    exit(EXIT_SUCCESS);
 }
 
-
-
 void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float loss_rate, char *file_name){
   int fd, trial_counter=0, addr_len=sizeof(addr);
   struct segment_packet data;
@@ -255,8 +261,13 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
   bool dyn_timer_enable=false;
   long sample_RTT=0, estimated_RTT=0, dev_RTT=0, dyn_timer_value=DEFAULT_TIMER; //microsecondi
   struct timeval start_sample, end_sample;
-  char path[505];
-  strcpy(path,"./files/");
+  char *path;
+
+  if((path=malloc(strlen(file_name)))==NULL){
+    perror("malloc fallita");
+    exit(EXIT_FAILURE);
+  }
+  sprintf(path,"./files/%s",file_name);
 
   if((packet_buffer=malloc(window_size*sizeof(struct segment_packet)))==NULL){
     perror("malloc fallita");
@@ -270,11 +281,10 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
   memset((void *)&data,0,sizeof(data));
   ack.seq_no=-1;
 
-  //Se timer e' minore di 0 attivo il timer dinamico
   if(timer<0)
     dyn_timer_enable=true;
 
-  strcat(path,file_name);
+  //strcat(path,file_name);
   if((fd=open(path,O_RDONLY))<0){
     perror("errore apertura file da inviare"); 
     exit(EXIT_FAILURE);
@@ -284,10 +294,13 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
   lseek(fd, 0, SEEK_SET);
   file_size = lseek(fd, 0, SEEK_END);
   lseek(fd, 0, SEEK_SET);
+
+  //Invio dati
   while((ack.seq_no+1)*497 < file_size){
     if(trial_counter>=10){
       printf("Abort il client e' morto o e' irraggiungibile\n");
-      exit(EXIT_SUCCESS);
+      close(fd);
+      exit(EXIT_FAILURE);
     }
     //Se c'e' stato un timeout ritrasmetti tutti i pacchetti in finestra
     if(timeout_event){
@@ -366,8 +379,7 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
       
     }         
   }
-  printf("file size %ld\n",file_size);
-  printf("Ackati %ld byte\n", (ack.seq_no+1)*497);
+
   trial_counter=-1;
   while(1){
     timeout_event=false;
@@ -401,6 +413,94 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
   }
   close(fd);
   printf("Get terminata\n");
+  exit(EXIT_SUCCESS);
+}
+
+void new_put(int sockfd, struct sockaddr_in addr, long timer, float loss_rate, char *file_name){
+  int n, fd, trial_counter=0, len=sizeof(addr);
+  struct segment_packet data;
+  struct ack_packet ack;
+  long expected_seq_no=0;
+  char *rm_string;
+  char *path;
+
+  if((path=malloc(strlen(file_name)))==NULL){
+    perror("malloc fallita");
+    exit(EXIT_FAILURE);
+  }
+  sprintf(path,"./files/%s",file_name);
+
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  
+  //Utile solo per la pulizia della directory in caso di errori
+  //rm_string=malloc(strlen(file_name)+3);
+  //sprintf(rm_string,"rm %s",file_name);
+
+   //apro file
+  if((fd = open(path, O_RDWR | O_CREAT| O_TRUNC, 0666))<0){
+    perror("errore apertura/creazione file da ricevere");
+    exit(EXIT_FAILURE);
+  }
+
+  //Ricevo dati
+  while(1){
+    if(trial_counter>=10){
+      printf("Il client e' morto o e' irraggiungibile\n");
+      close(fd);
+      exit(EXIT_FAILURE);
+    }
+    if(timeout_event){
+      trial_counter++;
+      timeout_event=false;
+    }
+
+    set_timer(timer);
+    if(recvfrom(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, &len)!=sizeof(data)){
+      perror("Pacchetto corrotto errore recv\n");
+      continue;
+    }
+    if(!simulate_loss(loss_rate)){
+      set_timer(0);
+      trial_counter=0;
+      //Se arriva un pacchetto in ordine lo riscontro e aggiorno il numero di sequenza che mi aspetto
+      if(data.seq_no==expected_seq_no){
+        if(data.type==FIN){
+          printf("Ho ricevuto FIN\n");
+          ack.type=FIN;
+          ack.seq_no=data.seq_no;
+          break;
+        }
+        else{
+          data.data[data.length]=0;
+          printf("Ho ricevuto un dato di %d byte del pacchetto %ld\n", data.length, data.seq_no);
+          if((n=write(fd, data.data, data.length))!=data.length){
+            perror("Non ho scritto tutto su file mi riposiziono\n");
+            lseek(fd,0,SEEK_CUR-n);
+            continue;
+          }
+          printf("Ho scritto %d byte sul file\n",n);
+          ack.type=NORMAL;
+          ack.seq_no=data.seq_no;
+          expected_seq_no++;
+        }
+      }
+      //Se arriva un pacchetto fuori ordine o corrotto invio l'ack della precedente iterazione
+
+      //Invio ack
+      sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *) &addr, sizeof(addr));
+      printf("ACK %ld inviato\n",ack.seq_no);
+
+   }
+    else
+      printf("PERDITA PACCHETTO SIMULATA\n");
+  } 
+
+  //Invio ack finale
+  sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *) &addr, sizeof(addr));
+  printf("FIN ACK inviato\n");
+  close(fd);
+  printf("\nPUT terminata\n\n");
   exit(EXIT_SUCCESS);
 }
 
@@ -476,7 +576,8 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
     
     if(trial_counter>=10){
       printf("Abort il client e' morto o e' irraggiungibile\n");
-      exit(EXIT_SUCCESS);
+      closedir(d);
+      exit(EXIT_FAILURE);
     }
     //Se c'e' stato un timeout ritrasmetti tutti i pacchetti in finestra
     if(timeout_event){
@@ -565,6 +666,7 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
     trial_counter++;
     if(trial_counter>=10){
       printf("Ho consegnato il pacchetto con successo ma il client e' morto o e' irraggiungibile\n");
+      closedir(d);
       exit(EXIT_SUCCESS);
     }
     data.type=FIN;

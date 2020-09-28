@@ -48,6 +48,8 @@ void get(int sockfd, long timer, float loss_rate);
 
 void list(int sockfd, long timer, float loss_rate);
 
+void new_put(int sockfd, long timer, int window_size, float loss_rate);
+
 
 int main(int argc, char *argv[]){
   int sockfd,n, serv_port, new_port, window_size;
@@ -185,7 +187,6 @@ int main(int argc, char *argv[]){
     printf("1)PUT\n");
     printf("2)GET\n");
     printf("3)LIST\n");
-    printf("4)EXIT\n");
     printf("Inserisci il numero dell'operazione da eseguire\n");
     selectOpt:
     if(scanf("%d",&n)!=1){
@@ -195,7 +196,8 @@ int main(int argc, char *argv[]){
     switch(n){
       case PUT:
         //system("clear");
-        put(sockfd);
+        new_put(sockfd, timer,window_size, loss_rate);
+        //put(sockfd);
         break;
       case GET:
         //system("clear");
@@ -307,6 +309,203 @@ void list(int sockfd, long timer, float loss_rate){
   exit(EXIT_SUCCESS);
 }
 
+void new_put(int sockfd, long timer, int window_size, float loss_rate){
+  int fd, trial_counter=0;
+  struct segment_packet data;
+  struct ack_packet ack;
+  struct segment_packet *packet_buffer;
+  long base=0,next_seq_no=0, file_size;
+  bool dyn_timer_enable=false;
+  long sample_RTT=0, estimated_RTT=0, dev_RTT=0, dyn_timer_value=DEFAULT_TIMER; //microsecondi
+  struct timeval start_sample, end_sample;
+
+  if((packet_buffer=malloc(window_size*sizeof(struct segment_packet)))==NULL){
+    perror("malloc fallita");
+    exit(EXIT_FAILURE);
+  }
+
+  memset((void *)&start_sample,0,sizeof(start_sample));
+  memset((void *)&end_sample,0,sizeof(end_sample));
+  memset((void *)packet_buffer,0,sizeof(packet_buffer));
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  ack.seq_no=-1;
+
+  if(timer<0)
+    dyn_timer_enable=true;
+
+  file_choice:
+  printf("Inserire il nome del file da scaricare (con estensione):\n");
+  if(scanf("%s",data.data)!=1){
+    perror("inserire un nome valido");
+    char c;
+    while ((c = getchar()) != '\n' && c != EOF) { }
+    goto file_choice;
+  }
+
+  //apro file
+  if((fd = open(data.data, O_RDONLY, 0666))<0){
+    perror("errore apertura/creazione file da ricevere controllare che il file sia presente sul server");
+    exit(EXIT_FAILURE);
+  }
+
+  //Calcolo dimensione file
+  lseek(fd, 0, SEEK_SET);
+  file_size = lseek(fd, 0, SEEK_END);
+  lseek(fd, 0, SEEK_SET);
+
+  //Invio richiesta
+  data.type=PUT;
+  while(1){
+    if(trial_counter>=10){
+      printf("Il server e' morto");
+      close(fd);
+      exit(EXIT_FAILURE);
+    }
+    /* Invia al server il pacchetto di richiesta*/
+    if(send(sockfd, &data, sizeof(data), 0) != sizeof(data)) {
+      perror("errore in send file name");
+      close(fd);
+      exit(EXIT_FAILURE);
+    }
+    set_timer(timer);
+    printf("Inviato nome file da aprire\n");
+    if(recv(sockfd,&ack, sizeof(ack),0) == sizeof(ack)){
+    printf("Ricevuto ack comando\n");
+    set_timer(0);
+    trial_counter=0;
+      break;
+    }
+    perror("errore recv comando");
+    trial_counter++;
+  }
+  trial_counter=0;
+
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  ack.seq_no=-1;
+
+  //Invio dati
+  while((ack.seq_no+1)*497 < file_size){
+    if(trial_counter>=10){
+      printf("Abort il server e' morto o e' irraggiungibile\n");
+      close(fd);
+      exit(EXIT_FAILURE);
+    }
+    //Se c'e' stato un timeout ritrasmetti tutti i pacchetti in finestra
+    if(timeout_event){
+      trial_counter++;
+      if(dyn_timer_enable)
+        set_timer(dyn_timer_value);
+      else
+        set_timer(timer);
+
+      gettimeofday(&start_sample,NULL);
+      for(int i=0; i<window_size; i++){
+          send(sockfd, &packet_buffer[i],sizeof(packet_buffer[i]), 0);
+      }
+      printf("Rinviati pacchetti e iniziato campionamento\n");
+      timeout_event=false;
+    }    
+
+    //Se la finestra non e' piena preparo ed invio il pacchetto
+    if(next_seq_no < base+window_size){ 
+      if((packet_buffer[next_seq_no%window_size].length = read(fd, packet_buffer[next_seq_no%window_size].data, MAXLINE)) > 0){
+        packet_buffer[next_seq_no%window_size].seq_no = next_seq_no;
+        packet_buffer[next_seq_no%window_size].type = NORMAL;
+        send(sockfd, &packet_buffer[next_seq_no%window_size], sizeof(packet_buffer[next_seq_no%window_size]), 0);
+        gettimeofday(&start_sample,NULL);
+        printf("Inviato pacchetto %ld e iniziato campionamento\n",packet_buffer[next_seq_no%window_size].seq_no);
+
+        //Se il next sequence number corrisponde con la base lancia il timer
+        if(base == next_seq_no){
+          if(dyn_timer_enable){
+            set_timer(dyn_timer_value);
+            printf("Ho lanciato il timer dinamico di %ld us\n",dyn_timer_value);
+          }
+          else{
+            set_timer(timer);
+            printf("Ho lanciato il timer statico di %ld us\n",timer);
+          } 
+        }
+
+        next_seq_no++;
+      }
+    }
+
+    //Controllo se ci sono ack
+    if(recv(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT) > 0){ 
+      if(!simulate_loss(loss_rate)){
+        trial_counter=0; //Vuoldire che il client e' ancora vivo
+        printf("ACK %ld ricevuto, ricalcolo timer\n",ack.seq_no);
+        base = ack.seq_no+1;
+        gettimeofday(&end_sample,NULL);
+        sample_RTT=((end_sample.tv_sec - start_sample.tv_sec) * 1000000) + (end_sample.tv_usec - start_sample.tv_usec);
+        //printf("sample_RTT %ld\n",sample_RTT);
+        estimated_RTT=(estimated_RTT*0.875)+(sample_RTT*0.125);
+        //printf("estimated_RTT %ld\n",estimated_RTT);
+        dev_RTT=(dev_RTT*0.75)+((abs(sample_RTT-estimated_RTT))*0.25);
+        //printf("dev_RTT %ld\n",dev_RTT);
+        dyn_timer_value=estimated_RTT+(dev_RTT*4);
+        //printf("Il nuovo timer e' %ld\n", dyn_timer_value);
+        //Stop del timer associato al pacchetto piu' vecchio della finestra 
+        if(base == next_seq_no){
+          set_timer(0);
+          printf("Ho fermato il timer\n");
+        }
+        else{
+          if(dyn_timer_enable){
+            set_timer(dyn_timer_value);
+            printf("Ho rilanciato il timer dinamico di %ld us\n",dyn_timer_value);
+          }
+          else{
+            set_timer(timer);
+            printf("Ho rilanciato il timer statico di %ld us\n",timer);
+          }
+        }
+      }
+      else
+        printf("PERDITA ACK SIMULATA\n");
+      
+    }         
+  }
+  
+  trial_counter=-1;
+  while(1){
+    timeout_event=false;
+    trial_counter++;
+    if(trial_counter>=10){
+      printf("Ho consegnato il pacchetto con successo ma il server e' morto o e' irraggiungibile\n");
+      exit(EXIT_SUCCESS);
+    }
+    data.type=FIN;
+    data.seq_no=next_seq_no;
+    send(sockfd, &data, sizeof(data), 0);
+    printf("Inviato FIN\n");
+    if(dyn_timer_enable){
+        set_timer(dyn_timer_value);
+        printf("Ho lanciato il timer dinamico finale di %ld us\n",dyn_timer_value);
+      }
+      else{
+        set_timer(timer);
+        printf("Ho lanciato il timer statico finale di %ld us\n",timer);
+      }
+    recv(sockfd, &ack, sizeof(struct ack_packet),0);
+    if(!simulate_loss(loss_rate)){
+      if(ack.type==FIN){
+        printf("Ho ricevuto FIN ACK\n");
+        set_timer(0);
+        break;
+      }
+   }
+   else
+    printf("PERDITA ACK FINALE SIMULATA\n");
+  }
+  close(fd);
+  printf("Put terminata\n");
+  exit(EXIT_SUCCESS);
+}
+
 void get(int sockfd, long timer, float loss_rate){
   int n, fd, trial_counter=0;
   struct segment_packet data;
@@ -330,12 +529,13 @@ void get(int sockfd, long timer, float loss_rate){
   rm_string=malloc(strlen(data.data)+3);
   sprintf(rm_string,"rm %s",data.data);
 
-   //apro file
+  //apro file
   if((fd = open(data.data, O_RDWR | O_CREAT| O_TRUNC, 0666))<0){
     perror("errore apertura/creazione file da ricevere controllare che il file sia presente sul server");
     exit(EXIT_FAILURE);
   }
 
+  //Invio richiesta
   data.type=GET;
   while(1){
     if(trial_counter>=10){
