@@ -49,13 +49,11 @@ void sig_alrm_handler(int signum);
 
 void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float loss_rate, char *file_name);
 
-void put(int sockfd, struct sockaddr_in addr);
+void put(int sockfd, struct sockaddr_in addr, long timer, float loss_rate, char *file_name);
 
 void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, float loss_rate);
 
 void set_timer(long timer);
-
-void new_put(int sockfd, struct sockaddr_in addr, long timer, float loss_rate, char *file_name);
 
 
 int main(int argc, char *argv[]){
@@ -72,7 +70,7 @@ int main(int argc, char *argv[]){
   memset((void *)&ack,0,sizeof(ack));
 
   if (argc < 5) { /* controlla numero degli argomenti */
-    fprintf(stderr, "utilizzo: client <porta server> <dimensione finestra> <probabilita' perdita (float, -1 for 0)> <timeout (us, -1 for dynamic timer)>\n");
+    fprintf(stderr, "utilizzo: server <porta server> <dimensione finestra> <probabilita' perdita (float, -1 for 0)> <timeout (in us it is advisable not to go below milliseconds, -1 for dynamic timer)>\n");
     exit(EXIT_FAILURE);
   }
 
@@ -89,6 +87,11 @@ int main(int argc, char *argv[]){
   if((loss_rate=atof(argv[3]))==0){
       fprintf(stderr,"inserisci un loss rate valido\n");
       exit(EXIT_FAILURE);
+  }
+
+  if(timer==0){
+    printf("Hai messo un timer nullo, il gobackn non e' realizzabile");
+    exit(EXIT_FAILURE);
   }
 
   if(loss_rate==-1)
@@ -181,16 +184,18 @@ int main(int argc, char *argv[]){
     }
 
     while(1){
-      //Ascolto di richieste di connessione dei client
+      //Attendo ack syn ack
       if(timer<0)
         set_timer(DEFAULT_TIMER);
       else
         set_timer(timer);
+
       if ((recvfrom(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&addr, &len)) < 0) {
         perror("errore in recvfrom ach_syn_ack");
         close(child_sockfd);
         goto start;
       }
+
       set_timer(0);
       //Controllo che sia la richiesta corretta
       if(ack.seq_no==data.seq_no)
@@ -216,7 +221,7 @@ int main(int argc, char *argv[]){
               perror("errore sendto ack comando");
               exit(EXIT_FAILURE);
             }
-            new_put(child_sockfd, child_addr, timer, loss_rate, data.data);
+            put(child_sockfd, child_addr, timer, loss_rate, data.data);
             break;
           case GET:
             alarm(0);
@@ -258,7 +263,6 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
   struct ack_packet ack;
   struct segment_packet *packet_buffer;
   long base=0,next_seq_no=0, file_size;
-  bool dyn_timer_enable=false;
   long sample_RTT=0, estimated_RTT=0, dev_RTT=0, dyn_timer_value=DEFAULT_TIMER; //microsecondi
   struct timeval start_sample, end_sample;
   char *path;
@@ -281,9 +285,6 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
   memset((void *)&data,0,sizeof(data));
   ack.seq_no=-1;
 
-  if(timer<0)
-    dyn_timer_enable=true;
-
   //strcat(path,file_name);
   if((fd=open(path,O_RDONLY))<0){
     perror("errore apertura file da inviare"); 
@@ -297,26 +298,11 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
 
   //Invio dati
   while((ack.seq_no+1)*497 < file_size){
-    if(trial_counter>=10){
+    if(trial_counter>10){
       printf("Abort il client e' morto o e' irraggiungibile\n");
       close(fd);
       exit(EXIT_FAILURE);
     }
-    //Se c'e' stato un timeout ritrasmetti tutti i pacchetti in finestra
-    if(timeout_event){
-      trial_counter++;
-      if(dyn_timer_enable)
-        set_timer(dyn_timer_value);
-      else
-        set_timer(timer);
-
-      gettimeofday(&start_sample,NULL);
-      for(int i=0; i<window_size; i++){
-          sendto(sockfd, &packet_buffer[i],sizeof(packet_buffer[i]), 0, (struct sockaddr *) &addr, sizeof(addr));
-      }
-      printf("Rinviati pacchetti e iniziato campionamento\n");
-      timeout_event=false;
-    }    
 
     //Se la finestra non e' piena preparo ed invio il pacchetto
     if(next_seq_no < base+window_size){ 
@@ -329,7 +315,7 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
 
         //Se il next sequence number corrisponde con la base lancia il timer
         if(base == next_seq_no){
-          if(dyn_timer_enable){
+          if(timer<0){
             set_timer(dyn_timer_value);
             printf("Ho lanciato il timer dinamico di %ld us\n",dyn_timer_value);
           }
@@ -364,7 +350,7 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
           printf("Ho fermato il timer\n");
         }
         else{
-          if(dyn_timer_enable){
+          if(timer<0){
             set_timer(dyn_timer_value);
             printf("Ho rilanciato il timer dinamico di %ld us\n",dyn_timer_value);
           }
@@ -377,14 +363,30 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
       else
         printf("PERDITA ACK SIMULATA\n");
       
-    }         
+    }      
+    //Se c'e' stato un timeout ritrasmetti tutti i pacchetti in finestra
+    if(timeout_event){
+      trial_counter++;
+      printf("Ritrasmissione\n");
+      if(timer<0)
+        set_timer(dyn_timer_value);
+      else
+        set_timer(timer);
+
+      gettimeofday(&start_sample,NULL);
+      for(int i=0; i<window_size; i++){
+          sendto(sockfd, &packet_buffer[i],sizeof(packet_buffer[i]), 0, (struct sockaddr *) &addr, sizeof(addr));
+      }
+      printf("Rinviati pacchetti e iniziato campionamento\n");
+      timeout_event=false;
+    }       
   }
 
   trial_counter=-1;
   while(1){
     timeout_event=false;
     trial_counter++;
-    if(trial_counter>=10){
+    if(trial_counter>10){
       printf("Ho consegnato il pacchetto con successo ma il client e' morto o e' irraggiungibile\n");
       exit(EXIT_SUCCESS);
     }
@@ -392,7 +394,7 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
     data.seq_no=next_seq_no;
     sendto(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, sizeof(addr));
     printf("Inviato FIN\n");
-    if(dyn_timer_enable){
+    if(timer<0){
         set_timer(dyn_timer_value);
         printf("Ho lanciato il timer dinamico finale di %ld us\n",dyn_timer_value);
       }
@@ -416,7 +418,8 @@ void get(int sockfd, struct sockaddr_in addr, long timer, int window_size, float
   exit(EXIT_SUCCESS);
 }
 
-void new_put(int sockfd, struct sockaddr_in addr, long timer, float loss_rate, char *file_name){
+
+void put(int sockfd, struct sockaddr_in addr, long timer, float loss_rate, char *file_name){
   int n, fd, trial_counter=0, len=sizeof(addr);
   struct segment_packet data;
   struct ack_packet ack;
@@ -434,8 +437,8 @@ void new_put(int sockfd, struct sockaddr_in addr, long timer, float loss_rate, c
   memset((void *)&data,0,sizeof(data));
   
   //Utile solo per la pulizia della directory in caso di errori
-  //rm_string=malloc(strlen(file_name)+3);
-  //sprintf(rm_string,"rm %s",file_name);
+  rm_string=malloc(strlen(file_name)+3);
+  sprintf(rm_string,"rm %s",path);
 
    //apro file
   if((fd = open(path, O_RDWR | O_CREAT| O_TRUNC, 0666))<0){
@@ -445,9 +448,10 @@ void new_put(int sockfd, struct sockaddr_in addr, long timer, float loss_rate, c
 
   //Ricevo dati
   while(1){
-    if(trial_counter>=10){
+    if(trial_counter>10){
       printf("Il client e' morto o e' irraggiungibile\n");
       close(fd);
+      system(rm_string);
       exit(EXIT_FAILURE);
     }
     if(timeout_event){
@@ -455,11 +459,16 @@ void new_put(int sockfd, struct sockaddr_in addr, long timer, float loss_rate, c
       timeout_event=false;
     }
 
-    set_timer(timer);
+    if(timer<0)
+      set_timer(DEFAULT_TIMER);
+    else
+      set_timer(timer);
+
     if(recvfrom(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, &len)!=sizeof(data)){
       perror("Pacchetto corrotto errore recv\n");
       continue;
     }
+
     if(!simulate_loss(loss_rate)){
       set_timer(0);
       trial_counter=0;
@@ -504,28 +513,6 @@ void new_put(int sockfd, struct sockaddr_in addr, long timer, float loss_rate, c
   exit(EXIT_SUCCESS);
 }
 
-void put(int sockfd, struct sockaddr_in addr){
-  int n, len, fd;
-  char buff[MAXLINE];
-  len=sizeof(addr);
-  //apro file
-  if((fd = open("files/prova1.jpg", O_RDWR | O_CREAT| O_TRUNC, 0666))<0){
-    perror("errore apertura/creazione file da ricevere");
-    exit(EXIT_FAILURE);
-  }
-
-   while((n = recvfrom(sockfd, buff, MAXLINE, 0, (struct sockaddr *) &addr, &len))) {
-        buff[n] = 0;
-        if (!(strcmp(buff, "End"))) {
-            break;
-        }
-        write(fd, buff, n);
-    }
-  printf("Ho finito di ricevere\n");
-  close(fd);
-}
-
-
 void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, float loss_rate){
   DIR *d;
   struct dirent *dir;
@@ -535,7 +522,6 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
   struct segment_packet data;
   struct ack_packet ack;
   struct segment_packet *packet_buffer;
-  bool dyn_timer_enable=false;
   long sample_RTT=0, estimated_RTT=0, dev_RTT=0, dyn_timer_value=DEFAULT_TIMER; //microsecondi
   struct timeval start_sample, end_sample;
 
@@ -550,10 +536,6 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
   ack.seq_no=-1;
-
-  //Se timer e' minore di 0 attivo il timer dinamico
-  if(timer<0)
-    dyn_timer_enable=true;
 
   //Apro la directory contente i file
   if((d = opendir("./files"))==NULL){
@@ -574,7 +556,7 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
   //Invio la lista dei file
   while((ack.seq_no+1)<num_of_files){
     
-    if(trial_counter>=10){
+    if(trial_counter>10){
       printf("Abort il client e' morto o e' irraggiungibile\n");
       closedir(d);
       exit(EXIT_FAILURE);
@@ -582,7 +564,7 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
     //Se c'e' stato un timeout ritrasmetti tutti i pacchetti in finestra
     if(timeout_event){
       trial_counter++;
-      if(dyn_timer_enable)
+      if(timer<0)
         set_timer(dyn_timer_value);
       else
         set_timer(timer);
@@ -610,7 +592,7 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
 
         //Se il next sequence number corrisponde con la base lancia il timer
         if(base == next_seq_no){
-          if(dyn_timer_enable){
+          if(timer<0){
             set_timer(dyn_timer_value);
             //printf("Ho lanciato il timer dinamico di %ld us\n",dyn_timer_value);
           }
@@ -644,7 +626,7 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
           //printf("Ho fermato il timer\n");
         }
         else{
-          if(dyn_timer_enable){
+          if(timer<0){
             set_timer(dyn_timer_value);
             //printf("Ho rilanciato il timer dinamico di %ld us\n",dyn_timer_value);
           }
@@ -664,7 +646,7 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
   while(1){
     timeout_event=false;
     trial_counter++;
-    if(trial_counter>=10){
+    if(trial_counter>10){
       printf("Ho consegnato il pacchetto con successo ma il client e' morto o e' irraggiungibile\n");
       closedir(d);
       exit(EXIT_SUCCESS);
@@ -673,14 +655,14 @@ void list(int sockfd, struct sockaddr_in addr, long timer, int window_size, floa
     data.seq_no=next_seq_no;
     sendto(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, sizeof(addr));
     printf("Inviato FIN\n");
-    if(dyn_timer_enable){
+    if(timer<0){
         set_timer(dyn_timer_value);
         printf("Ho lanciato il timer dinamico finale di %ld us\n",dyn_timer_value);
       }
-      else{
+    else{
         set_timer(timer);
         printf("Ho lanciato il timer statico finale di %ld us\n",timer);
-      }
+    }
     recvfrom(sockfd, &ack, sizeof(struct ack_packet),0, (struct sockaddr *) &addr, &addr_len);
     if(!simulate_loss(loss_rate)){
       if(ack.type==FIN){
