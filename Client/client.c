@@ -1,0 +1,578 @@
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdbool.h>
+#include <signal.h>
+#include <time.h>
+#include <sys/time.h>
+
+#define DEFAULT_TIMER 50000
+#define NORMAL 10
+#define FIN 11
+#define SYN 14
+#define MAXLINE 497
+#define PUT 1
+#define GET 2
+#define LIST 3
+
+bool timeout_event=false;
+
+struct segment_packet {
+    int type;
+    bool is_ack;
+    long seq_no;
+    int length;
+    char data[MAXLINE];
+};
+
+struct ack_packet {
+    int type;
+    long seq_no;
+};
+
+bool simulate_loss(float loss_rate);
+
+void sig_alrm_handler(int signum);
+
+void get(int sockfd, double timer, float loss_rate);
+
+void list(int sockfd, double timer, float loss_rate);
+
+void put(int sockfd, double timer, int window_size, float loss_rate);
+
+
+int main(int argc, char *argv[]){
+  int sockfd,n, serv_port, new_port, window_size;
+  struct sockaddr_in servaddr, child_addr;
+  struct sigaction sa;
+  struct segment_packet data;
+  struct ack_packet ack;
+  long conn_req_no;
+  float loss_rate;
+  double timer;
+
+  memset((void *)&data,0,sizeof(data));
+  memset((void *)&ack,0,sizeof(ack));
+
+  if (argc < 6) { /* controlla numero degli argomenti */
+    fprintf(stderr, "utilizzo: client <indirizzo IPv4 server> <porta server> <dimensione finestra> <probabilita' perdita (float, -1 for 0)> <timeout (in ms double, -1 for dynamic timer)>\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if((serv_port=atoi(argv[2]))<1024){
+    fprintf(stderr,"inserisci un numero di porta valido\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if((window_size=atoi(argv[3]))==0){
+    fprintf(stderr,"inserisci dimensione finestra valida\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if((loss_rate=atof(argv[4]))==0){
+      fprintf(stderr,"inserisci un loss rate valido\n");
+      exit(EXIT_FAILURE);
+  }
+
+  if(loss_rate==-1)
+    loss_rate=0;
+
+  if((timer=atof(argv[5]))==0){
+    fprintf(stderr,"inserisci un timer valido\n");
+    exit(EXIT_FAILURE);
+  }
+
+  //random seed per la perdita simulata
+  srand48(2345);
+
+  if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { /* crea il socket */
+    perror("errore in socket");
+    exit(EXIT_FAILURE);
+  }
+
+  memset((void *)&servaddr, 0, sizeof(servaddr));
+  memset((void *)&child_addr, 0, sizeof(child_addr));
+  /* azzera servaddr */
+  servaddr.sin_family = AF_INET;
+  /* assegna il tipo di indirizzo */
+  servaddr.sin_port = htons(serv_port); /* assegna la porta del server */
+  /* assegna l'indirizzo del server prendendolo dalla riga di comando. L'indirizzo è
+  una stringa da convertire in intero secondo network byte order. */
+  if (inet_pton(AF_INET, argv[1], &servaddr.sin_addr) <= 0) {
+  /* inet_pton (p=presentation) vale anche per indirizzi IPv6 */
+    perror("errore in inet_pton");
+    exit(EXIT_FAILURE);
+  }
+
+  sa.sa_handler = sig_alrm_handler;
+  /* installa il gestore del segnale */
+  sa.sa_flags = 0;
+  sigemptyset(&sa.sa_mask);
+  if (sigaction(SIGALRM, &sa, NULL) < 0) {
+    fprintf(stderr, "errore in sigaction");
+    exit(EXIT_FAILURE);
+  }
+
+  // Per non usare sempre sendto e recvfrom
+  if (connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0) {
+    perror("errore in connect");
+    exit(EXIT_FAILURE);
+  }
+
+  //Invio SYN con numero di sequenza casuale come identificatore della connessione
+  conn_req_no=lrand48();
+  data.seq_no=conn_req_no;
+  data.type=SYN;
+  if (send(sockfd, &data, sizeof(data), 0) < 0) {
+    perror("errore in send richiesta connession syn");
+    exit(EXIT_FAILURE);
+  }
+  
+  while(1){
+    memset((void *)&data,0,sizeof(data));
+    //Attendo SYNACK
+    if(recv(sockfd, &data, sizeof(data), 0)<0){
+      perror("errore in recv porta dedicata syn_ack");
+      exit(EXIT_FAILURE);
+    }
+    //Se l'identificatore non e' corretto il SYNACK non e' per me
+    if(data.seq_no==conn_req_no)
+      break;
+  }
+
+  //Invio ACKSYNACK
+  new_port=atoi(data.data);
+  ack.type=SYN;
+  ack.seq_no=conn_req_no;
+  if (send(sockfd, &ack, sizeof(ack), 0) < 0) {
+    perror("errore in send ack_syn_ack");
+    exit(EXIT_FAILURE);
+  }
+
+
+  /* azzera child_addr */
+  child_addr.sin_family = AF_INET;
+  /* assegna il tipo di indirizzo */
+  child_addr.sin_port = new_port; /* assegna la porta del figlio */
+  if (inet_pton(AF_INET, argv[1], &child_addr.sin_addr) <= 0) {
+  /* inet_pton (p=presentation) vale anche per indirizzi IPv6 */
+    perror("errore in inet_pton");
+    exit(EXIT_FAILURE);
+  }
+
+  // Per non usare sempre sendto e recvfrom
+  if (connect(sockfd, (struct sockaddr *) &child_addr, sizeof(child_addr)) < 0) {
+    perror("errore in connect");
+    exit(EXIT_FAILURE);
+  }
+  printf("Ti sei connesso con successo\n");
+
+  while(1){
+    printf("Cosa posso fare per te? Hai un minuto per scegliere\n");
+    printf("1)PUT\n");
+    printf("2)GET\n");
+    printf("3)LIST\n");
+    printf("Inserisci il numero dell'operazione da eseguire\n");
+    selectOpt:
+    if(scanf("%d",&n)!=1){
+      perror("errore acquisizione operazione da eseguire");
+      exit(1);
+    }
+    switch(n){
+      case PUT:
+        //system("clear");
+        put(sockfd, timer,window_size, loss_rate);
+        //put(sockfd);
+        break;
+      case GET:
+        //system("clear");
+        get(sockfd, timer, loss_rate);
+        break;
+      case LIST:
+        //system("clear");
+        //list(sockfd);
+        list(sockfd, timer, loss_rate);
+        break;
+      default:
+        printf("Inserisci un numero valido\n");
+        goto selectOpt;
+        break;
+    }
+  }
+  close(sockfd);
+  exit(EXIT_SUCCESS);
+}
+
+void list(int sockfd, double timer, float loss_rate){
+  int trial_counter=0;
+  struct segment_packet data;
+  struct ack_packet ack;
+  long expected_seq_no=0;
+
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+
+  data.type=LIST;
+  while(1){
+    
+    //Invia al server il pacchetto di richiesta
+    if(send(sockfd, &data, sizeof(data), 0) != sizeof(data)) {
+      perror("errore in send comando");
+      exit(EXIT_FAILURE);
+    }
+    printf("Inviato comando\n");
+
+    //Attesa ACK richiesta
+    if(recv(sockfd,&ack, sizeof(ack),0) == sizeof(ack)){
+      printf("Ricevuto ack comando\n");
+      break;
+    }
+    perror("errore recv comando");
+  }
+
+  //Pulizia
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  ack.seq_no=-1;
+
+  printf("Lista dei file su server:\n\n");
+
+  //Ricevo dati
+  while(1){
+
+    //Attendo pacchetti dal server
+    if(recv(sockfd, &data, sizeof(data), 0)!=sizeof(data)){
+      perror("Pacchetto corrotto errore recv\n");
+      continue;
+    }
+    if(!simulate_loss(loss_rate)){
+
+      //Se arriva un pacchetto in ordine creo il relativo ack e aggiorno l'expected sequence number
+      if(data.seq_no==expected_seq_no){
+
+        //Se arriva il FIN esco
+        if(data.type==FIN){
+          printf("\nHo ricevuto FIN\n");
+          ack.type=FIN;
+          ack.seq_no=data.seq_no;
+          break;
+        }
+
+        //Se arriva un dato printo su stdout
+        else{
+          printf("%s\n",data.data);
+          ack.type=NORMAL;
+          ack.seq_no=data.seq_no;
+          expected_seq_no++;
+        }
+      }
+      //Se arriva un pacchetto fuori ordine o corrotto non genero ack utilizzando quindi quello dell'iterazione precedente 
+
+      //Invio ack
+      send(sockfd, &ack, sizeof(ack), 0);
+      //printf("ACK %ld inviato\n",ack.seq_no);
+
+   }
+    else
+      printf("PERDITA PACCHETTO SIMULATA\n");
+  } 
+
+  //Invio ack finale
+  send(sockfd, &ack, sizeof(ack), 0);
+  printf("FIN ACK inviato\n");
+  printf("\nLIST terminata\n\n");
+  exit(EXIT_SUCCESS);
+}
+
+void put(int sockfd, double timer, int window_size, float loss_rate){
+  int fd, trial_counter=0;
+  struct segment_packet data;
+  struct ack_packet ack;
+  struct segment_packet *packet_buffer;
+  long base=0,next_seq_no=0, file_size;
+  clock_t sample_RTT, timer_sample; 
+  bool dyn_timer_enable=false, timer_enable=false, rtt_sample_enable=false;
+
+  //Attivo timer dinamico
+  if(timer<0){
+    dyn_timer_enable=true;
+    timer=DEFAULT_TIMER;
+  }
+
+  //Alloco il buffer della finestra
+  if((packet_buffer=malloc(window_size*sizeof(struct segment_packet)))==NULL){
+    perror("malloc fallita");
+    exit(EXIT_FAILURE);
+  }
+
+  //Pulizia
+  memset((void *)packet_buffer,0,sizeof(packet_buffer));
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  ack.seq_no=-1;
+
+  //Scelta del file da caricare su server
+  file_choice:
+  printf("Inserire il nome del file da scaricare (con estensione):\n");
+  if(scanf("%s",data.data)!=1){
+    perror("inserire un nome valido");
+    char c;
+    while ((c = getchar()) != '\n' && c != EOF) { }
+    goto file_choice;
+  }
+
+  //Apro file
+  if((fd = open(data.data, O_RDONLY, 0666))<0){
+    perror("errore apertura/creazione file da ricevere controllare che il file sia presente sul server");
+    exit(EXIT_FAILURE);
+  }
+
+  //Calcolo dimensione file
+  lseek(fd, 0, SEEK_SET);
+  file_size = lseek(fd, 0, SEEK_END);
+  lseek(fd, 0, SEEK_SET);
+
+  //Invio richiesta
+  data.type=PUT;
+  while(1){
+
+    //Invia al server il pacchetto di richiesta
+    if(send(sockfd, &data, sizeof(data), 0) != sizeof(data)) {
+      perror("errore in send file name");
+      close(fd);
+      exit(EXIT_FAILURE);
+    }
+    printf("Inviata richiesta\n");
+    
+    //Attendo ACK richiesta
+    if(recv(sockfd,&ack, sizeof(ack),0) == sizeof(ack)){
+    printf("Ricevuto ack comando\n");
+      break;
+    }
+    perror("errore recv comando");
+  }
+
+  //Pulizia
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  ack.seq_no=-1;
+
+  //Invio dati
+  while((ack.seq_no+1)*497 < file_size){
+
+    //Se la finestra non e' piena preparo ed invio il pacchetto
+    if(next_seq_no < base+window_size){ 
+      if((packet_buffer[next_seq_no%window_size].length = read(fd, packet_buffer[next_seq_no%window_size].data, MAXLINE)) > 0){
+        packet_buffer[next_seq_no%window_size].seq_no = next_seq_no;
+        packet_buffer[next_seq_no%window_size].type = NORMAL;
+        send(sockfd, &packet_buffer[next_seq_no%window_size], sizeof(packet_buffer[next_seq_no%window_size]), 0);
+        printf("Inviato pacchetto %ld e iniziato campionamento\n",packet_buffer[next_seq_no%window_size].seq_no);
+
+        //Se e' attivato il timer dinamico campiono per calcolare l'rtt
+        if((dyn_timer_enable)&&(!rtt_sample_enable)){
+          sample_RTT = clock();
+          rtt_sample_enable = true;
+        }
+        printf("Inviato pacchetto %ld\n",packet_buffer[next_seq_no%window_size].seq_no);
+
+        //Se il next sequence number corrisponde con la base lancia il timer
+        if(base == next_seq_no){
+          timer_sample = clock();
+          timer_enable = true;
+        }
+
+        next_seq_no++;
+      }
+    }
+
+    //Scadenza del timer ritrasmetto tutto quello che era presente nella finestra
+    if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
+      timer_sample = clock();
+      for(int i=0; i<window_size; i++){
+        send(sockfd, &packet_buffer[i], sizeof(packet_buffer[i]), 0);
+        if((dyn_timer_enable)&&(rtt_sample_enable==0)){
+          sample_RTT = clock();
+          rtt_sample_enable = true;
+        }
+        printf("Pacchetto %ld ritrasmesso\n",packet_buffer[i].seq_no);  
+      }
+    }
+
+    //Controllo se ci sono ack
+    if(recv(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT) > 0){ 
+      if(!simulate_loss(loss_rate)){
+        printf("ACK %ld ricevuto, ricalcolo timer\n",ack.seq_no);
+        base = ack.seq_no;
+
+        //Aggiorno timer dinamico
+        if((dyn_timer_enable)&&(rtt_sample_enable==1)){
+          rtt_sample_enable = false;
+          timer = (double)(clock()-sample_RTT)*1000/CLOCKS_PER_SEC; 
+        } 
+        //Stop del timer associato al pacchetto piu' vecchio della finestra 
+        if(base == next_seq_no){
+          timer_enable = false;
+          printf("Ho fermato il timer\n");
+        }
+      }
+      else
+        printf("PERDITA ACK SIMULATA\n");
+    }         
+  }
+  
+  //Termine operazione
+  while(1){
+    data.type=FIN;
+    data.seq_no=next_seq_no;
+    send(sockfd, &data, sizeof(data), 0);
+    printf("Inviato FIN\n");
+
+    recv(sockfd, &ack, sizeof(struct ack_packet),0);
+    //if(!simulate_loss(loss_rate)){
+      if(ack.type==FIN){
+        printf("Ho ricevuto FIN ACK\n");
+        break;
+      }
+   //}
+   //else
+   // printf("PERDITA ACK FINALE SIMULATA\n");
+  }
+  close(fd);
+  printf("PUT terminata\n");
+  exit(EXIT_SUCCESS);
+}
+
+void get(int sockfd, double timer, float loss_rate){
+  int n, fd, trial_counter=0;
+  struct segment_packet data;
+  struct ack_packet ack;
+  long expected_seq_no=0;
+  char *rm_string;
+
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+
+  //Scelta del file da scaricare dal server
+  file_choice:
+  printf("Inserire il nome del file da scaricare (con estensione):\n");
+  if(scanf("%s",data.data)!=1){
+    perror("inserire un nome valido");
+    char c;
+    while ((c = getchar()) != '\n' && c != EOF) { }
+    goto file_choice;
+  }
+
+  printf("E' stato scelto %s \n", data.data);
+
+  //Utile solo per la pulizia della directory in caso di errori
+  rm_string=malloc(strlen(data.data)+3);
+  sprintf(rm_string,"rm %s",data.data);
+
+  //Apro file
+  if((fd = open(data.data, O_RDWR | O_CREAT| O_TRUNC, 0666))<0){
+    perror("errore apertura/creazione file da ricevere controllare che il file sia presente sul server");
+    exit(EXIT_FAILURE);
+  }
+
+  //Invio richiesta
+  data.type=GET;
+  while(1){
+
+    //Invio pacchetto di richiesta
+    if(send(sockfd, &data, sizeof(data), 0) != sizeof(data)) {
+      perror("errore in send file name");
+      close(fd);
+      system(rm_string);
+      exit(EXIT_FAILURE);
+    }
+    printf("Richiesta inviata\n");
+    
+    //Attendo ACK richiesta 
+    if(recv(sockfd,&ack, sizeof(ack),0) == sizeof(ack)){
+      printf("Ricevuto ACK richiesta\n");
+      break;
+    }
+    perror("errore recv comando");
+  }
+
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  ack.seq_no=-1;
+
+  //Ricevo dati
+  while(1){
+
+    //Attendo pacchetti
+    if(recv(sockfd, &data, sizeof(data), 0)!=sizeof(data)){
+      perror("Pacchetto corrotto errore recv\n");
+      continue;
+    }
+
+    if(!simulate_loss(loss_rate)){
+
+      //Se arriva un pacchetto in ordine lo riscontro e aggiorno il numero di sequenza che mi aspetto
+      if(data.seq_no==expected_seq_no){
+
+        //Se e' un FIN esco
+        if(data.type==FIN){
+          printf("Ho ricevuto FIN\n");
+          ack.type=FIN;
+          ack.seq_no=data.seq_no;
+          break;
+        }
+
+        //Se non e' un FIN scrivo su file e continuo
+        else{
+          data.data[data.length]=0;
+          printf("Ho ricevuto un dato di %d byte del pacchetto %ld\n", data.length, data.seq_no);
+          if((n=write(fd, data.data, data.length))!=data.length){
+            perror("Non ho scritto tutto su file mi riposiziono\n");
+            lseek(fd,0,SEEK_CUR-n);
+            continue;
+          }
+          printf("Ho scritto %d byte sul file\n",n);
+          ack.type=NORMAL;
+          ack.seq_no=data.seq_no;
+          expected_seq_no++;
+        }
+      }
+      //Se arriva un pacchetto fuori ordine o corrotto invio l'ack della precedente iterazione
+
+      //Invio ack
+      send(sockfd, &ack, sizeof(ack), 0);
+      printf("ACK %ld inviato\n",ack.seq_no);
+
+   }
+    else
+      printf("PERDITA PACCHETTO SIMULATA\n");
+  } 
+
+  //Invio ack finale
+  send(sockfd, &ack, sizeof(ack), 0);
+  printf("FIN ACK inviato\n");
+  close(fd);
+  printf("\nGET terminata\n\n");
+  exit(EXIT_SUCCESS);
+}
+
+bool simulate_loss(float loss_rate){
+    double rv;
+    rv = drand48();
+    if (rv < loss_rate)
+    {
+        return true;
+    } else {
+        return false;
+    }
+}
+
+void sig_alrm_handler(int signum){
+  printf("SIGALRM\n");
+  timeout_event=true;
+}
