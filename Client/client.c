@@ -11,8 +11,9 @@
 #include <signal.h>
 #include <time.h>
 #include <sys/time.h>
+#include <math.h>
 
-#define DEFAULT_TIMER 50000
+#define DEFAULT_TIMER 500
 #define NORMAL 10
 #define FIN 11
 #define SYN 14
@@ -296,8 +297,9 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   struct ack_packet ack;
   struct segment_packet *packet_buffer;
   long base=0,next_seq_no=0, file_size;
-  clock_t sample_RTT, timer_sample; 
-  bool dyn_timer_enable=false, timer_enable=false, rtt_sample_enable=false;
+  clock_t start_sample_RTT, timer_sample; 
+  double sample_RTT=0, estimated_RTT=0, dev_RTT=0;
+  bool dyn_timer_enable=false, timer_enable=false, RTT_sample_enable=false;
 
   //Attivo timer dinamico
   if(timer<0){
@@ -375,9 +377,9 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
         printf("Inviato pacchetto %ld e iniziato campionamento\n",packet_buffer[next_seq_no%window_size].seq_no);
 
         //Se e' attivato il timer dinamico campiono per calcolare l'rtt
-        if((dyn_timer_enable)&&(!rtt_sample_enable)){
-          sample_RTT = clock();
-          rtt_sample_enable = true;
+        if((dyn_timer_enable)&&(!RTT_sample_enable)){
+          start_sample_RTT = clock();
+          RTT_sample_enable = true;
         }
         printf("Inviato pacchetto %ld\n",packet_buffer[next_seq_no%window_size].seq_no);
 
@@ -396,9 +398,9 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
       timer_sample = clock();
       for(int i=0; i<window_size; i++){
         send(sockfd, &packet_buffer[i], sizeof(packet_buffer[i]), 0);
-        if((dyn_timer_enable)&&(rtt_sample_enable==0)){
-          sample_RTT = clock();
-          rtt_sample_enable = true;
+        if((dyn_timer_enable)&&(RTT_sample_enable==0)){
+          start_sample_RTT = clock();
+          RTT_sample_enable = true;
         }
         printf("Pacchetto %ld ritrasmesso\n",packet_buffer[i].seq_no);  
       }
@@ -411,9 +413,17 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
         base = ack.seq_no;
 
         //Aggiorno timer dinamico
-        if((dyn_timer_enable)&&(rtt_sample_enable==1)){
-          rtt_sample_enable = false;
-          timer = (double)(clock()-sample_RTT)*1000/CLOCKS_PER_SEC; 
+        if((dyn_timer_enable)&&(RTT_sample_enable==1)){
+          RTT_sample_enable = false;
+          sample_RTT=(double)(clock()-start_sample_RTT)*1000/CLOCKS_PER_SEC;
+          printf("SAMPLE RTT %f\n", sample_RTT);
+          estimated_RTT=(double)(0.875*estimated_RTT)+(0.125*sample_RTT);
+          printf("ESTIMATED RTT %f\n", estimated_RTT);
+          dev_RTT=(double)(0.75*dev_RTT)+(0.25*fabs(sample_RTT-estimated_RTT));
+          printf("DEV RTT %f\n", dev_RTT);
+          timer=(double)estimated_RTT+4*dev_RTT;
+          printf("Nuovo timer %f\n",timer);
+          //timer = (double)(clock()-sample_RTT)*1000/CLOCKS_PER_SEC; 
         } 
         //Stop del timer associato al pacchetto piu' vecchio della finestra 
         if(base == next_seq_no){
