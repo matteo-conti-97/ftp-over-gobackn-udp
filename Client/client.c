@@ -235,7 +235,7 @@ void list(int sockfd, double timer, float loss_rate){
 
     //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
     if(trial_counter>10){
-      printf("Il client e' morto oppure il canale e' molto disturbato tuttavia il file e' stato consegnato con successo\n");
+      printf("Il client e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       exit(EXIT_FAILURE);
     }
 
@@ -388,7 +388,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
 
     //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
     if(trial_counter>10){
-      printf("Il server e' morto oppure il canale e' molto disturbato tuttavia il file e' stato consegnato con successo\n");
+      printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(fd);
       exit(EXIT_FAILURE);
     }
@@ -445,7 +445,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
 
     //Se ci sono troppe ritrasmissioni lascio stare
     if(trial_counter>10){
-      printf("Il client e' morto oppure il canale e' molto disturbato\n");
+      printf("Il client e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -620,7 +620,7 @@ void get(int sockfd, double timer, float loss_rate){
     
     //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
     if(trial_counter>10){
-      printf("Il server e' morto oppure il canale e' molto disturbato tuttavia il file e' stato consegnato con successo\n");
+      printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(fd);
       system(rm_string);
       exit(EXIT_FAILURE);
