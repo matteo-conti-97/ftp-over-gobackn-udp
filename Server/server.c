@@ -16,15 +16,13 @@
 #include <math.h>
 
 #define DEFAULT_TIMER 500
-#define MAX_CHOICE_TIME 60
+#define MAX_CHOICE_TIME 120
 #define NORMAL 10
 #define FIN 11
 #define MAXLINE 497
 #define PUT 1
 #define GET 2
 #define LIST 3
-
-bool timeout_event=false;
 
 struct segment_packet {
     int type;
@@ -188,13 +186,13 @@ int main(int argc, char *argv[]){
         alarm(MAX_CHOICE_TIME);
         if ((recvfrom(child_sockfd, &data, sizeof(data), 0, (struct sockaddr *)&child_addr, &child_len)) < 0) {
           perror("errore in recvfrom comando");
+          close(child_sockfd);
           exit(EXIT_FAILURE);
         }
 
         switch(data.type){
           case PUT:
             alarm(0);
-            timeout_event=false;
             //printf("Ho ricevuto il comando put %d\n",command);
             //put(child_sockfd, child_addr);
             ack.type=PUT;
@@ -206,7 +204,6 @@ int main(int argc, char *argv[]){
             break;
           case GET:
             alarm(0);
-            timeout_event=false;
             //printf("Ho ricevuto il comando get %d\n",data.type);
             //printf("Il nome del file scelto e' %s", data.data);
             ack.type=GET;
@@ -218,7 +215,6 @@ int main(int argc, char *argv[]){
             break;
           case LIST:
             alarm(0);
-            timeout_event=false;
             ack.type=LIST;
             printf("Ho ricevuto il comando list %d\n",data.type);
             if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))!=sizeof(ack)){
@@ -692,7 +688,6 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
 }
 
 void sig_alrm_handler(int signum){
-   timeout_event=true;
    printf("SIGALRM\n"); 
 }
 

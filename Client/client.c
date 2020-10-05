@@ -13,6 +13,7 @@
 #include <sys/time.h>
 #include <math.h>
 
+#define MAX_CHOICE_TIME 120
 #define DEFAULT_TIMER 500
 #define NORMAL 10
 #define FIN 11
@@ -21,8 +22,6 @@
 #define PUT 1
 #define GET 2
 #define LIST 3
-
-bool timeout_event=false;
 
 struct segment_packet {
     int type;
@@ -175,11 +174,12 @@ int main(int argc, char *argv[]){
   printf("Ti sei connesso con successo\n");
 
   while(1){
-    printf("Cosa posso fare per te? Hai un minuto per scegliere\n");
+    alarm(MAX_CHOICE_TIME);
+    printf("Cosa posso fare per te? Hai due minuti per scegliere.\n");
     printf("1)PUT\n");
     printf("2)GET\n");
     printf("3)LIST\n");
-    printf("Inserisci il numero dell'operazione da eseguire\n");
+    printf("Inserisci il numero dell'operazione da eseguire:\n");
     selectOpt:
     if(scanf("%d",&n)!=1){
       perror("errore acquisizione operazione da eseguire");
@@ -188,16 +188,19 @@ int main(int argc, char *argv[]){
     switch(n){
       case PUT:
         //system("clear");
+        alarm(0);
         put(sockfd, timer,window_size, loss_rate);
         //put(sockfd);
         break;
       case GET:
         //system("clear");
+        alarm(0);
         get(sockfd, timer, loss_rate);
         break;
       case LIST:
         //system("clear");
         //list(sockfd);
+        alarm(0);
         list(sockfd, timer, loss_rate);
         break;
       default:
@@ -738,6 +741,6 @@ bool simulate_loss(float loss_rate){
 }
 
 void sig_alrm_handler(int signum){
-  printf("SIGALRM\n");
-  timeout_event=true;
+  printf("Tempo per la scelta terminato\n");
+  exit(EXIT_FAILURE);
 }
