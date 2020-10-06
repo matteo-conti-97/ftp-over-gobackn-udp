@@ -444,7 +444,7 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
   memset((void *)&data,0,sizeof(data));
   
   //Utile solo per la pulizia della directory in caso di errori
-  rm_string=malloc(strlen(file_name)+3);
+  rm_string=malloc(strlen(path)+3);
   sprintf(rm_string,"rm %s",path);
 
    //apro file
