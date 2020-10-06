@@ -14,7 +14,7 @@
 #include <math.h>
 
 #define MAX_CHOICE_TIME 120
-#define DEFAULT_TIMER 500
+#define DEFAULT_TIMER 50
 #define NORMAL 10
 #define FIN 11
 #define SYN 14
@@ -48,33 +48,42 @@ void put(int sockfd, double timer, int window_size, float loss_rate);
 
 
 int main(int argc, char *argv[]){
-  int sockfd,n, serv_port, new_port, window_size;
+  int sockfd,n, serv_port, new_port, window_size, trial_counter=0;
   struct sockaddr_in servaddr, child_addr;
   struct sigaction sa;
   struct segment_packet data;
   struct ack_packet ack;
   long conn_req_no;
   float loss_rate;
-  double timer;
+  double timer, syn_timer;
+  clock_t timer_sample; 
+  bool dyn_timer_enable=false, timer_enable=false, SYN_sended=false;
 
+  //Pulizia
   memset((void *)&data,0,sizeof(data));
   memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&servaddr, 0, sizeof(servaddr));
+  memset((void *)&child_addr, 0, sizeof(child_addr));
 
-  if (argc < 6) { /* controlla numero degli argomenti */
+  //Controllo numero di argomenti
+  if (argc < 6) { 
     fprintf(stderr, "utilizzo: client <indirizzo IPv4 server> <porta server> <dimensione finestra> <probabilita' perdita (float, -1 for 0)> <timeout (in ms double, -1 for dynamic timer)>\n");
     exit(EXIT_FAILURE);
   }
 
+  //Controllo numero di porta
   if((serv_port=atoi(argv[2]))<1024){
     fprintf(stderr,"inserisci un numero di porta valido\n");
     exit(EXIT_FAILURE);
   }
 
+  //Controllo dimensione finestra
   if((window_size=atoi(argv[3]))==0){
     fprintf(stderr,"inserisci dimensione finestra valida\n");
     exit(EXIT_FAILURE);
   }
 
+  //Controllo probabilita' di perdita
   if((loss_rate=atof(argv[4]))==0){
       fprintf(stderr,"inserisci un loss rate valido\n");
       exit(EXIT_FAILURE);
@@ -83,35 +92,40 @@ int main(int argc, char *argv[]){
   if(loss_rate==-1)
     loss_rate=0;
 
+  //Controllo timer
   if((timer=atof(argv[5]))==0){
     fprintf(stderr,"inserisci un timer valido\n");
     exit(EXIT_FAILURE);
   }
 
-  //random seed per la perdita simulata
+  if(timer<0){
+    syn_timer=DEFAULT_TIMER;
+    dyn_timer_enable=true;
+  }
+  else
+    syn_timer=timer;
+
+  //Seed per la perdita simulata
   srand48(2345);
 
-  if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { /* crea il socket */
+  //Creazione socket
+  if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { 
     perror("errore in socket");
     exit(EXIT_FAILURE);
   }
 
-  memset((void *)&servaddr, 0, sizeof(servaddr));
-  memset((void *)&child_addr, 0, sizeof(child_addr));
-  /* azzera servaddr */
+  //Assegnazione tipo di indirizzo
   servaddr.sin_family = AF_INET;
-  /* assegna il tipo di indirizzo */
-  servaddr.sin_port = htons(serv_port); /* assegna la porta del server */
-  /* assegna l'indirizzo del server prendendolo dalla riga di comando. L'indirizzo è
-  una stringa da convertire in intero secondo network byte order. */
+  //Assegnazione porta server
+  servaddr.sin_port = htons(serv_port);
+  //Assegnazione indirizzo IP del server
   if (inet_pton(AF_INET, argv[1], &servaddr.sin_addr) <= 0) {
-  /* inet_pton (p=presentation) vale anche per indirizzi IPv6 */
     perror("errore in inet_pton");
     exit(EXIT_FAILURE);
   }
 
+  //Installazione gestore sigalarm
   sa.sa_handler = sig_alrm_handler;
-  /* installa il gestore del segnale */
   sa.sa_flags = 0;
   sigemptyset(&sa.sa_mask);
   if (sigaction(SIGALRM, &sa, NULL) < 0) {
@@ -119,31 +133,68 @@ int main(int argc, char *argv[]){
     exit(EXIT_FAILURE);
   }
 
-  // Per non usare sempre sendto e recvfrom
+  //Per non usare sempre sendto e recvfrom
   if (connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0) {
     perror("errore in connect");
     exit(EXIT_FAILURE);
   }
 
-  //Invio SYN con numero di sequenza casuale come identificatore della connessione
-  conn_req_no=lrand48();
-  data.seq_no=conn_req_no;
-  data.type=SYN;
-  if (send(sockfd, &data, sizeof(data), 0) < 0) {
-    perror("errore in send richiesta connession syn");
-    exit(EXIT_FAILURE);
-  }
-  
+  //Richiesta di connessione al server
   while(1){
-    memset((void *)&data,0,sizeof(data));
-    //Attendo SYNACK
-    if(recv(sockfd, &data, sizeof(data), 0)<0){
-      perror("errore in recv porta dedicata syn_ack");
+
+    //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
+    if(trial_counter>=5){
+      printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       exit(EXIT_FAILURE);
     }
-    //Se l'identificatore non e' corretto il SYNACK non e' per me
-    if(data.seq_no==conn_req_no)
-      break;
+    
+
+    if(!SYN_sended){
+      //Invio SYN con numero di sequenza casuale come identificatore della connessione
+      conn_req_no=lrand48();
+      data.seq_no=conn_req_no;
+      data.type=SYN;
+      if (send(sockfd, &data, sizeof(data), 0) < 0) {
+        perror("errore in send richiesta connession syn");
+        exit(EXIT_FAILURE);
+      }
+
+      SYN_sended=true;
+
+      //Start timer
+      timer_sample = clock();
+      timer_enable = true;
+
+      printf("SYN inviato\n");
+    }
+
+    //Timeout
+    if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > syn_timer) && (timer_enable)){ 
+      timer_sample = clock();
+
+      //Se il timer scade probabilmente e' troppo breve, lo raddoppio
+      if(dyn_timer_enable)
+        syn_timer=syn_timer*2;
+
+      SYN_sended=false;
+      trial_counter++;
+      printf("Timeout SYN\n");
+    }
+
+    //Attendo SYNACK
+    if(recv(sockfd, &data, sizeof(data), MSG_DONTWAIT)>0){
+      if(!simulate_loss(loss_rate)){
+
+         //Se l'identificatore non e' corretto il SYNACK non e' per me
+        if(data.seq_no==conn_req_no){
+          printf("Ricevuto SYNACK\n");
+          timer_enable=false;
+          break;
+        }
+      }
+      else
+        printf("PERDITA SYNACK SIMULATA\n");
+    }
   }
 
   //Invio ACKSYNACK
@@ -156,12 +207,12 @@ int main(int argc, char *argv[]){
   }
 
 
-  /* azzera child_addr */
+  //Assegnazione tipo di indirizzo
   child_addr.sin_family = AF_INET;
-  /* assegna il tipo di indirizzo */
-  child_addr.sin_port = new_port; /* assegna la porta del figlio */
+  //Assegnazione porta del figlio dedicato
+  child_addr.sin_port = new_port;
+  //Assegnazione indirizzo IP del figlio
   if (inet_pton(AF_INET, argv[1], &child_addr.sin_addr) <= 0) {
-  /* inet_pton (p=presentation) vale anche per indirizzi IPv6 */
     perror("errore in inet_pton");
     exit(EXIT_FAILURE);
   }
@@ -180,10 +231,12 @@ int main(int argc, char *argv[]){
     printf("2)GET\n");
     printf("3)LIST\n");
     printf("Inserisci il numero dell'operazione da eseguire:\n");
-    selectOpt:
+    select_opt:
     if(scanf("%d",&n)!=1){
       perror("errore acquisizione operazione da eseguire");
-      exit(1);
+      char c;
+      while ((c = getchar()) != '\n' && c != EOF) { }
+      goto select_opt;
     }
     switch(n){
       case PUT:
@@ -205,7 +258,7 @@ int main(int argc, char *argv[]){
         break;
       default:
         printf("Inserisci un numero valido\n");
-        goto selectOpt;
+        goto select_opt;
         break;
     }
   }
@@ -233,9 +286,9 @@ void list(int sockfd, double timer, float loss_rate){
 
   while(1){
 
-    //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
+    //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
     if(trial_counter>10){
-      printf("Il client e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
+      printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       exit(EXIT_FAILURE);
     }
 
@@ -243,8 +296,8 @@ void list(int sockfd, double timer, float loss_rate){
       
       //Invia al server il pacchetto di richiesta
       data.type=LIST;
-      if(send(sockfd, &data, sizeof(data), 0) != sizeof(data)) {
-        perror("errore in send file name");
+      if(send(sockfd, &data, sizeof(data), 0) < 0) {
+        perror("errore in send comando");
         exit(EXIT_FAILURE);
       }
       printf("Inviata richiesta\n");
@@ -258,9 +311,10 @@ void list(int sockfd, double timer, float loss_rate){
     if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
       timer_sample = clock();
 
-      //Non avendo modo di poter aggiustare il timer, se ci sono perdite probabilmente e' troppo breve e lo raddoppio
+      //Se il timer scade probabilmente e' troppo breve, lo raddoppio
       if(dyn_timer_enable)
         timer=timer*2;
+
       command_sended=false;
       trial_counter++;
       printf("Timeout comando\n");
@@ -290,9 +344,17 @@ void list(int sockfd, double timer, float loss_rate){
   //Ricevo dati
   while(1){
 
+    //Se ci sono troppi errori di lettura lascio stare
+    if(trial_counter>10){
+      printf("Il server e' morto oppure il canale e' molto disturbato\n");
+      close(sockfd);
+      exit(EXIT_FAILURE);
+    }
+
     //Attendo pacchetti dal server
-    if(recv(sockfd, &data, sizeof(data), 0)!=sizeof(data)){
+    if(recv(sockfd, &data, sizeof(data), 0)<0){
       perror("Pacchetto corrotto errore recv\n");
+      trial_counter++;
       continue;
     }
     if(!simulate_loss(loss_rate)){
@@ -393,7 +455,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   //Invio richiesta
   while(1){
 
-    //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
+    //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
     if(trial_counter>10){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(fd);
@@ -404,7 +466,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   
       //Invia al server il pacchetto di richiesta
       data.type=PUT;
-      if(send(sockfd, &data, sizeof(data), 0) != sizeof(data)) {
+      if(send(sockfd, &data, sizeof(data), 0) <0) {
         perror("errore in send file name");
         close(fd);
         exit(EXIT_FAILURE);
@@ -420,7 +482,6 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
     if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
       timer_sample = clock();
 
-      //Non avendo modo di poter aggiustare il timer, se ci sono perdite probabilmente e' troppo breve e lo raddoppio
       if(dyn_timer_enable)
         timer=timer*2;
       command_sended=false;
@@ -452,7 +513,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
 
     //Se ci sono troppe ritrasmissioni lascio stare
     if(trial_counter>10){
-      printf("Il client e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
+      printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -484,12 +545,16 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
 
     //Scadenza del timer ritrasmetto tutto quello che era presente nella finestra
     if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
+      
+      //Se il timer scade probabilmente e' troppo breve, lo raddoppio
       if(dyn_timer_enable)
         timer=timer*2;
+
       trial_counter++;
       timer_sample = clock();
       for(int i=0; i<window_size; i++){
         send(sockfd, &packet_buffer[i], sizeof(packet_buffer[i]), 0);
+
         if((dyn_timer_enable)&&(RTT_sample_enable==0)){
           start_sample_RTT = clock();
           RTT_sample_enable = true;
@@ -551,6 +616,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
       data.seq_no=next_seq_no;
       send(sockfd, &data, sizeof(data), 0);
       FIN_sended=true;
+      
       //Start timer
       timer_sample = clock();
       timer_enable = true;
@@ -561,9 +627,10 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
     if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
       timer_sample = clock();
 
-      //Non avendo modo di poter aggiustare il timer, se ci sono perdite probabilmente e' troppo breve e lo raddoppio
+      //Se il timer scade probabilmente e' troppo breve, lo raddoppio
       if(dyn_timer_enable)
         timer=timer*2;
+
       FIN_sended=false;
       trial_counter++;
       printf("Timeout FIN\n");
@@ -630,7 +697,7 @@ void get(int sockfd, double timer, float loss_rate){
   //Invio richiesta
   while(1){
     
-    //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
+    //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
     if(trial_counter>10){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(fd);
@@ -642,7 +709,7 @@ void get(int sockfd, double timer, float loss_rate){
 
       //Invia al server il pacchetto di richiesta
       data.type=GET;
-      if(send(sockfd, &data, sizeof(data), 0) != sizeof(data)) {
+      if(send(sockfd, &data, sizeof(data), 0) <0) {
         perror("errore in send file name");
         close(fd);
         system(rm_string);
@@ -659,7 +726,7 @@ void get(int sockfd, double timer, float loss_rate){
     if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
       timer_sample = clock();
 
-      //Non avendo modo di poter aggiustare il timer, se ci sono perdite probabilmente e' troppo breve e lo raddoppio
+      //Se il timer scade probabilmente e' troppo breve, lo raddoppio
       if(dyn_timer_enable)
         timer=timer*2;
       command_sended=false;
@@ -688,9 +755,17 @@ void get(int sockfd, double timer, float loss_rate){
   //Ricevo dati
   while(1){
 
+    //Se ci sono troppi errori di lettura lascio stare
+    if(trial_counter>10){
+      printf("Il server e' morto oppure il canale e' molto disturbato\n");
+      close(sockfd);
+      exit(EXIT_FAILURE);
+    }
+
     //Attendo pacchetti
-    if(recv(sockfd, &data, sizeof(data), 0)!=sizeof(data)){
+    if(recv(sockfd, &data, sizeof(data), 0)<0){
       perror("Pacchetto corrotto errore recv\n");
+      trial_counter++;
       continue;
     }
 

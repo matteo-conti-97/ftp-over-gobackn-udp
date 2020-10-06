@@ -15,8 +15,8 @@
 #include <time.h>
 #include <math.h>
 
-#define DEFAULT_TIMER 500
-#define MAX_CHOICE_TIME 120
+#define DEFAULT_TIMER 50
+#define MAX_CHOICE_TIME 140
 #define NORMAL 10
 #define FIN 11
 #define MAXLINE 497
@@ -53,33 +53,43 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
 void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, float loss_rate);
 
 int main(int argc, char *argv[]){
-  int sockfd, child_sockfd, serv_port, window_size, len, child_len;
+  int sockfd, child_sockfd, serv_port, window_size, len, child_len, trial_counter=0;
   struct sockaddr_in addr, child_addr;
   pid_t pid;
   struct sigaction sa;
   struct segment_packet data;
   struct ack_packet ack;
   float loss_rate;
-  double timer;
+  double timer, synack_timer;
+  clock_t timer_sample; 
+  bool dyn_timer_enable=false, timer_enable=false, SYNACK_sended=false;
+  long conn_req_no;
 
+  //Pulizia
   memset((void *)&data,0,sizeof(data));
   memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&addr, 0, sizeof(addr));
+  memset((void *)&child_addr, 0, sizeof(addr));
 
-  if (argc < 5) { /* controlla numero degli argomenti */
+  //Controllo numero di argomenti
+  if (argc < 5) { 
     fprintf(stderr, "utilizzo: server <porta server> <dimensione finestra> <probabilita' perdita (float, -1 for 0)> <timeout (in ms double, -1 for dynamic timer)>\n");
     exit(EXIT_FAILURE);
   }
 
+  //Controllo numero di porta
   if((serv_port=atoi(argv[1]))<1024){
     fprintf(stderr,"inserisci un numero di porta valido\n");
     exit(EXIT_FAILURE);
   }
 
+  //Controllo dimensione finestra
   if((window_size=atoi(argv[2]))==0){
     fprintf(stderr,"inserisci dimensione finestra valida\n");
     exit(EXIT_FAILURE);
   }
 
+  //Controllo probabilita' di perdita
   if((loss_rate=atof(argv[3]))==0){
       fprintf(stderr,"inserisci un loss rate valido\n");
       exit(EXIT_FAILURE);
@@ -88,39 +98,50 @@ int main(int argc, char *argv[]){
   if(loss_rate==-1)
     loss_rate=0;
 
+  //Controllo timer
   if((timer=atof(argv[4]))==0){
     fprintf(stderr,"inserisci un timer valido\n");
     exit(EXIT_FAILURE);
   }
 
-  //random seed per la perdita simulata
+  if(timer<0){
+    synack_timer=DEFAULT_TIMER;
+    dyn_timer_enable=true;
+  }
+  else
+    synack_timer=timer;
+
+  //Seed per la perdita simulata
   srand48(2345);
 
-  if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { /* crea il socket */
+  //Creazione socket
+  if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { 
     perror("errore in socket padre");
     exit(EXIT_FAILURE);
   }
   
-  memset((void *)&addr, 0, sizeof(addr));
-  memset((void *)&child_addr, 0, sizeof(addr));
+  //Assegnazione tipo di indirizzo
   addr.sin_family = AF_INET;
-  addr.sin_addr.s_addr = htonl(INADDR_ANY); /* il server accetta pacchetti su una qualunque delle sue interfacce di rete */
-  addr.sin_port = htons(serv_port); /* numero di porta del server */
+  //Assegnazione interfacce da cui accettare pacchetti (tutti)
+  addr.sin_addr.s_addr = htonl(INADDR_ANY); 
+  //Assegnazione porta del server
+  addr.sin_port = htons(serv_port);
   len = sizeof(addr);
 
-  /* assegna l'indirizzo al socket */
+  //Assegna indirizzo al socket
   if (bind(sockfd, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
     perror("errore in bind");
     exit(EXIT_FAILURE);
   }
 
+  //Installazione gestore sigchild
   if (signal(SIGCHLD, sig_child_handler) == SIG_ERR) { 
     fprintf(stderr, "errore in signal");
     exit(EXIT_FAILURE);
   }
 
-  sa.sa_handler = sig_alrm_handler;
-  /* installa il gestore del segnale */
+  //Installazione gestore sigalarm
+  sa.sa_handler = sig_alrm_handler; 
   sa.sa_flags = 0;
   sigemptyset(&sa.sa_mask);
   if (sigaction(SIGALRM, &sa, NULL) < 0) {
@@ -130,23 +151,30 @@ int main(int argc, char *argv[]){
 
   start:
   while (1) {
+    trial_counter=0;
     //Ascolto di richieste di connessione dei client
     if ((recvfrom(sockfd, &data, sizeof(data), 0, (struct sockaddr *)&addr, &len)) < 0) {
       perror("errore in recvfrom attesa client");
       exit(EXIT_FAILURE);
     }
+
+    conn_req_no=data.seq_no;
+
     //Creo il socket del figlio dedicato al client
     if ((child_sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { 
     perror("errore in socket figlio");
     exit(EXIT_FAILURE);
     }
 
+    //Assegnazione tipo di indirizzo figlio
     child_addr.sin_family = AF_INET;
-    child_addr.sin_addr.s_addr = htonl(INADDR_ANY); /* il figlio accetta pacchetti su una qualunque delle sue interfacce di rete */
+    //Assegnazione interfacce figlio da cui accettare pacchetti (tutti)
+    child_addr.sin_addr.s_addr = htonl(INADDR_ANY); 
+     //Assegnazione porta del figlio
     child_addr.sin_port = htons(0);
     child_len=sizeof(child_addr);
 
-    /* assegna l'indirizzo al socket del figlio */
+    //Assegna l'indirizzo al socket del figlio 
     if (bind(child_sockfd, (struct sockaddr *) &child_addr, sizeof(child_addr)) < 0) {
     perror("errore in bind socket figlio");
     exit(EXIT_FAILURE);
@@ -159,23 +187,58 @@ int main(int argc, char *argv[]){
     }
 
     sprintf(data.data,"%d",child_addr.sin_port);
-    //Invio la nuova porta al client
-    if(sendto(sockfd, &data, sizeof(data), 0, (struct sockaddr *)&addr, sizeof(addr))<0){
-      perror("errore in sendto porta figlio syn_ack");
-      close(child_sockfd);
-      goto start;
-    }
 
-    while(1){
-      //Attendo ack syn ack
-      if ((recvfrom(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&addr, &len)) < 0) {
-        perror("errore in recvfrom ach_syn_ack");
+    while(1){ 
+
+      //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
+      if(trial_counter>=5){
+        printf("Il client e' morto oppure il canale e' molto disturbato abort\n");
         close(child_sockfd);
         goto start;
       }
-      //Controllo che sia la richiesta corretta
-      if(ack.seq_no==data.seq_no)
-        break;
+
+      if(!SYNACK_sended){
+        //Invio la nuova porta al client
+        if(sendto(sockfd, &data, sizeof(data), 0, (struct sockaddr *)&addr, sizeof(addr))<0){
+          perror("errore in sendto porta figlio synack");
+          close(child_sockfd);
+          goto start;
+        }
+
+        //Se il timer scade probabilmente e' troppo breve, lo raddoppio
+        SYNACK_sended=true;
+
+        //Start timer
+        timer_sample = clock();
+        timer_enable = true;
+        printf("SYNACK inviato\n");
+      }
+
+      //Timeout
+      if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
+        timer_sample = clock();
+
+        if(dyn_timer_enable)
+          timer=timer*2;
+
+        SYNACK_sended=false;
+        trial_counter++;
+        printf("Timeout SYNACK\n");
+      }
+
+      //Attendo ack syn ack
+      if ((recvfrom(sockfd, &ack, sizeof(ack), MSG_DONTWAIT, (struct sockaddr *)&addr, &len)) > 0) {
+        if(!simulate_loss(loss_rate)){
+          //Controllo che sia la richiesta corretta
+          if(ack.seq_no==conn_req_no){
+            printf("ACKSYNACK ricevuto\n");
+            break;
+          }
+        }
+        else
+          printf("PERDITA ACKSYNACK SIMULATA\n");
+      }
+      
     }
 
     //Fork del figlio
@@ -192,10 +255,8 @@ int main(int argc, char *argv[]){
         switch(data.type){
           case PUT:
             alarm(0);
-            //printf("Ho ricevuto il comando put %d\n",command);
-            //put(child_sockfd, child_addr);
             ack.type=PUT;
-            if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))!=sizeof(ack)){
+            if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
               exit(EXIT_FAILURE);
             }
@@ -203,10 +264,8 @@ int main(int argc, char *argv[]){
             break;
           case GET:
             alarm(0);
-            //printf("Ho ricevuto il comando get %d\n",data.type);
-            //printf("Il nome del file scelto e' %s", data.data);
             ack.type=GET;
-            if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))!=sizeof(ack)){
+            if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
               exit(EXIT_FAILURE);
             }
@@ -216,17 +275,20 @@ int main(int argc, char *argv[]){
             alarm(0);
             ack.type=LIST;
             printf("Ho ricevuto il comando list %d\n",data.type);
-            if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))!=sizeof(ack)){
+            if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
               exit(EXIT_FAILURE);
             }
             list(child_sockfd, child_addr, timer, window_size, loss_rate);
-            //list(child_sockfd, child_addr);
             break;
           default:
             break;
         }
       }
+    }
+    else{
+      printf("Chiudo riferimento al socket nel padre\n");
+      close(child_sockfd);
     }
   }
  
@@ -322,12 +384,16 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
 
     //Scadenza del timer ritrasmetto tutto quello che era presente nella finestra
     if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
+
+      //Se il timer scade probabilmente e' troppo breve, lo raddoppio
       if(dyn_timer_enable)
         timer=timer*2; 
+
       trial_counter++;
       timer_sample = clock();
       for(int i=0; i<window_size; i++){
         sendto(sockfd, &packet_buffer[i], sizeof(packet_buffer[i]), 0, (struct sockaddr *) &addr, sizeof(addr));
+
         if((dyn_timer_enable)&&(RTT_sample_enable==0)){
           start_sample_RTT = clock();
           RTT_sample_enable = true;
@@ -389,6 +455,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
       data.seq_no=next_seq_no;
       sendto(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, sizeof(addr));
       FIN_sended=true;
+
       //Start timer
       timer_sample = clock();
       timer_enable = true;
@@ -399,7 +466,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
     if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
       timer_sample = clock();
 
-      //Non avendo modo di poter aggiustare il timer, se ci sono perdite probabilmente e' troppo breve e lo raddoppio
+      //Se il timer scade probabilmente e' troppo breve, lo raddoppio
       if(dyn_timer_enable)
         timer=timer*2;
       FIN_sended=false;
@@ -457,8 +524,16 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
   //Ricevo dati
   while(1){
 
-    if(recvfrom(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, &len)!=sizeof(data)){
+    //Se ci sono troppi errori di lettura lascio stare
+    if(trial_counter>10){
+      printf("Il client e' morto oppure il canale e' molto disturbato\n");
+      close(sockfd);
+      exit(EXIT_FAILURE);
+    }
+
+    if(recvfrom(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, &len)<0){
       perror("Pacchetto corrotto errore recv\n");
+      trial_counter++;
       continue;
     }
 
@@ -606,12 +681,16 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
 
     //Scadenza del timer ritrasmetto tutto quello che era presente nella finestra
     if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){
+      
+      //Se il timer scade probabilmente e' troppo breve, lo raddoppio
       if(dyn_timer_enable)
         timer=timer*2;
+
       trial_counter++;
       timer_sample = clock();
       for(int i=0; i<window_size; i++){
         sendto(sockfd, &packet_buffer[i], sizeof(packet_buffer[i]), 0, (struct sockaddr *) &addr, sizeof(addr));
+
         if((dyn_timer_enable)&&(RTT_sample_enable==0)){
           start_sample_RTT = clock();
           RTT_sample_enable = true;
@@ -621,7 +700,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
     }
 
     //Controllo se ci sono ack
-    if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len) ==sizeof(ack)){ 
+    if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len) > 0){ 
       if(!simulate_loss(loss_rate)){
         printf("ACK %ld ricevuto, ricalcolo timer\n",ack.seq_no);
         base = ack.seq_no;
@@ -673,6 +752,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
       data.seq_no=next_seq_no;
       sendto(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, sizeof(addr));
       FIN_sended=true;
+
       //Start timer
       timer_sample = clock();
       timer_enable = true;
@@ -683,7 +763,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
     if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
       timer_sample = clock();
 
-      //Non avendo modo di poter aggiustare il timer, se ci sono perdite probabilmente e' troppo breve e lo raddoppio
+      //Se il timer scade probabilmente e' troppo breve, lo raddoppio
       if(dyn_timer_enable)
         timer=timer*2;
       FIN_sended=false;
@@ -711,7 +791,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
 }
 
 void sig_alrm_handler(int signum){
-   printf("SIGALRM\n"); 
+  printf("SIGALRM\n"); 
 }
 
 bool simulate_loss(float loss_rate){
@@ -727,11 +807,9 @@ bool simulate_loss(float loss_rate){
 
 Sigfunc *signal(int signum, Sigfunc *func){
   struct sigaction  act, oact;
-    /* la struttura sigaction memorizza informazioni riguardanti la
-  manipolazione del segnale */
 
   act.sa_handler = func;
-  sigemptyset(&act.sa_mask);  /* non occorre bloccare nessun altro segnale */
+  sigemptyset(&act.sa_mask); 
   act.sa_flags = 0;
   if (signum != SIGALRM) 
      act.sa_flags |= SA_RESTART;  
@@ -744,7 +822,7 @@ void sig_child_handler(int signum){
   int status;
   pid_t pid;
   while((pid = waitpid(WAIT_ANY, &status, WNOHANG)>0))
-    printf("Figlio %d terminato",pid);
+    printf("Figlio %d terminato\n",pid);
   return;
 }
 
