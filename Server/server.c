@@ -158,7 +158,7 @@ int main(int argc, char *argv[]){
       exit(EXIT_FAILURE);
     }
 
-    conn_req_no=data.seq_no;
+    conn_req_no=ntohl(data.seq_no);
 
     //Creo il socket del figlio dedicato al client
     if ((child_sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { 
@@ -186,7 +186,7 @@ int main(int argc, char *argv[]){
       exit(EXIT_FAILURE);
     }
 
-    sprintf(data.data,"%d",child_addr.sin_port);
+    sprintf(data.data,"%d",htons(child_addr.sin_port));
 
     while(1){ 
 
@@ -230,7 +230,7 @@ int main(int argc, char *argv[]){
       if ((recvfrom(sockfd, &ack, sizeof(ack), MSG_DONTWAIT, (struct sockaddr *)&addr, &len)) > 0) {
         if(!simulate_loss(loss_rate)){
           //Controllo che sia la richiesta corretta
-          if(ack.seq_no==conn_req_no){
+          if(ntohl(ack.seq_no)==conn_req_no){
             printf("ACKSYNACK ricevuto\n");
             break;
           }
@@ -252,10 +252,10 @@ int main(int argc, char *argv[]){
           exit(EXIT_FAILURE);
         }
 
-        switch(data.type){
+        switch(ntohs(data.type)){
           case PUT:
             alarm(0);
-            ack.type=PUT;
+            ack.type=htons(PUT);
             if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
               exit(EXIT_FAILURE);
@@ -264,7 +264,7 @@ int main(int argc, char *argv[]){
             break;
           case GET:
             alarm(0);
-            ack.type=GET;
+            ack.type=htons(GET);
             if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
               exit(EXIT_FAILURE);
@@ -273,7 +273,7 @@ int main(int argc, char *argv[]){
             break;
           case LIST:
             alarm(0);
-            ack.type=LIST;
+            ack.type=htons(LIST);
             printf("Ho ricevuto il comando list %d\n",data.type);
             if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
@@ -315,7 +315,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   //Costruisco la stringa path del file da scaricare 
   if((path=malloc(strlen(file_name)))==NULL){
     perror("malloc fallita");
-    data.length=strlen("Get fallita: errore interno del server");
+    data.length=htons(strlen("Get fallita: errore interno del server"));
     strcpy(data.data,"Get fallita: errore interno del server");
     goto get_termination;
   }
@@ -324,7 +324,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   //Alloco il buffer della finestra
   if((packet_buffer=malloc(window_size*sizeof(struct segment_packet)))==NULL){
     perror("malloc fallita");
-    data.length=strlen("Get fallita: errore interno del server");
+    data.length=htons(strlen("Get fallita: errore interno del server"));
     strcpy(data.data,"Get fallita: errore interno del server");
     goto get_termination;
   }
@@ -333,12 +333,12 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   memset((void *)packet_buffer,0,sizeof(packet_buffer));
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
-  ack.seq_no=-1;
+  ack.seq_no=htonl(-1);
 
   //Apro il file
   if((fd=open(path,O_RDONLY))<0){
     perror("errore apertura file da inviare"); 
-    data.length=strlen("Get fallita: rrore nell'apertura del file controllare che sia presente sul server");
+    data.length=htons(strlen("Get fallita: rrore nell'apertura del file controllare che sia presente sul server"));
     strcpy(data.data,"Get fallita: errore nell'apertura del file controllare che sia presente sul server");
     goto get_termination;
   }
@@ -349,7 +349,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   lseek(fd, 0, SEEK_SET);
 
   //Invio dati
-  while((ack.seq_no+1)*497 < file_size){
+  while((ntohl(ack.seq_no)+1)*497 < file_size){
 
     //Se ci sono troppe ritrasmissioni lascio stare
     if(trial_counter>10){
@@ -360,9 +360,9 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
 
     //Se la finestra non e' piena preparo ed invio il pacchetto
     if(next_seq_no < base+window_size){ 
-      if((packet_buffer[next_seq_no%window_size].length = read(fd, packet_buffer[next_seq_no%window_size].data, MAXLINE)) > 0){
-        packet_buffer[next_seq_no%window_size].seq_no = next_seq_no;
-        packet_buffer[next_seq_no%window_size].type = NORMAL;
+      if((packet_buffer[next_seq_no%window_size].length = htons(read(fd, packet_buffer[next_seq_no%window_size].data, MAXLINE))) > 0){
+        packet_buffer[next_seq_no%window_size].seq_no = htonl(next_seq_no);
+        packet_buffer[next_seq_no%window_size].type = htons(NORMAL);
         sendto(sockfd, &packet_buffer[next_seq_no%window_size], sizeof(packet_buffer[next_seq_no%window_size]), 0, (struct sockaddr *) &addr, sizeof(addr));
         
         //Se e' attivato il timer dinamico campiono per calcolare l'rtt
@@ -370,7 +370,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
           start_sample_RTT = clock();
           RTT_sample_enable = true;
         }
-        printf("Inviato pacchetto %ld\n",packet_buffer[next_seq_no%window_size].seq_no);
+        printf("Inviato pacchetto %d\n", ntohl(packet_buffer[next_seq_no%window_size].seq_no));
 
         //Se il next sequence number corrisponde con la base lancia il timer
         if(base == next_seq_no){
@@ -398,15 +398,15 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
           start_sample_RTT = clock();
           RTT_sample_enable = true;
         }
-        printf("Pacchetto %ld ritrasmesso\n",packet_buffer[i].seq_no);  
+        printf("Pacchetto %d ritrasmesso\n", ntohl(packet_buffer[i].seq_no));  
       }
     }
 
     //Controllo se ci sono ack
     if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len) > 0){ 
       if(!simulate_loss(loss_rate)){
-        printf("ACK %ld ricevuto\n",ack.seq_no);
-        base = ack.seq_no;
+        printf("ACK %d ricevuto\n", ntohl(ack.seq_no));
+        base = ntohl(ack.seq_no);
 
         //Azzero il contatore di tentativi di ritrasmissione in quanto se ricevo ACK il client e' vivo
         trial_counter=0;
@@ -451,8 +451,8 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
 
     //Invio il FIN solo se devo farlo per la prima volta o lo rinvio in caso di timeout per non inviarne inutilmente
     if(!FIN_sended){
-      data.type=FIN;
-      data.seq_no=next_seq_no;
+      data.type=htons(FIN);
+      data.seq_no=htonl(next_seq_no);
       sendto(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, sizeof(addr));
       FIN_sended=true;
 
@@ -477,7 +477,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
     //Attendo FINACK
     if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len)>0){
       if(!simulate_loss(loss_rate)){
-        if(ack.type==FIN){
+        if(ntohs(ack.type)==FIN){
           printf("Ho ricevuto FIN ACK\n");
           break;
         }
@@ -539,30 +539,31 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
 
     if(!simulate_loss(loss_rate)){
       //Se arriva un pacchetto in ordine lo riscontro e aggiorno il numero di sequenza che mi aspetto
-      if(data.seq_no==expected_seq_no){
-        if(data.type==FIN){
+      if(ntohl(data.seq_no)==expected_seq_no){
+        if(ntohs(data.type)==FIN){
 
           //Se e' un FIN di errore printo l'errore, rimuovo il file sporco ed esco
-          if(data.length>0){
+          if(ntohs(data.length)>0){
             printf("%s\n", data.data);
             system(rm_string);
           }
           else
             printf("Ho ricevuto FIN\n");
-          ack.type=FIN;
+
+          ack.type=htons(FIN);
           ack.seq_no=data.seq_no;
           break;
         }
         else{
-          data.data[data.length]=0;
-          printf("Ho ricevuto un dato di %d byte del pacchetto %ld\n", data.length, data.seq_no);
-          if((n=write(fd, data.data, data.length))!=data.length){
+          data.data[ntohs(data.length)]=0;
+          printf("Ho ricevuto un dato di %d byte del pacchetto %d\n", ntohs(data.length), ntohl(data.seq_no));
+          if((n=write(fd, data.data, ntohs(data.length)))!=ntohs(data.length)){
             perror("Non ho scritto tutto su file mi riposiziono\n");
             lseek(fd,0,SEEK_CUR-n);
             continue;
           }
           printf("Ho scritto %d byte sul file\n",n);
-          ack.type=NORMAL;
+          ack.type=htons(NORMAL);
           ack.seq_no=data.seq_no;
           expected_seq_no++;
         }
@@ -571,7 +572,7 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
 
       //Invio ack
       sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *) &addr, sizeof(addr));
-      printf("ACK %ld inviato\n",ack.seq_no);
+      printf("ACK %d inviato\n", ntohl(ack.seq_no));
 
    }
     else
@@ -609,7 +610,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
   //Alloco il buffer della finestra finestra
   if((packet_buffer=malloc(window_size*sizeof(struct segment_packet)))==NULL){
     perror("malloc fallita");
-    data.length=strlen("List fallita: errore interno del server");
+    data.length=htons(strlen("List fallita: errore interno del server"));
     strcpy(data.data,"List fallita: errore interno del server");
     goto list_termination;
   }
@@ -618,12 +619,12 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
   memset((void *)packet_buffer,0,sizeof(packet_buffer));
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
-  ack.seq_no=-1;
+  ack.seq_no=htonl(-1);
 
   //Apro la directory contente i file
   if((d = opendir("./files"))==NULL){
     perror("errore apertura directory dei file");
-    data.length=strlen("List fallita: errore interno del server");
+    data.length=htons(strlen("List fallita: errore interno del server"));
     strcpy(data.data,"List fallita: errore interno del server");
     goto list_termination;
   }
@@ -643,7 +644,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
   seekdir(d,head);
 
   //Invio la lista dei file
-  while((ack.seq_no+1)<num_of_files){
+  while((ntohl(ack.seq_no)+1)<num_of_files){
 
     //Se ci sono troppe ritrasmissioni lascio stare
     if(trial_counter>10){
@@ -658,9 +659,9 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
         if((strcmp(dir->d_name,".")==0)||(strcmp(dir->d_name,"..")==0)) 
           continue;
         strcpy(packet_buffer[next_seq_no%window_size].data, dir->d_name);
-        packet_buffer[next_seq_no%window_size].length=strlen(dir->d_name);
-        packet_buffer[next_seq_no%window_size].seq_no = next_seq_no;
-        packet_buffer[next_seq_no%window_size].type = NORMAL;
+        packet_buffer[next_seq_no%window_size].length=htons(strlen(dir->d_name));
+        packet_buffer[next_seq_no%window_size].seq_no = htonl(next_seq_no);
+        packet_buffer[next_seq_no%window_size].type = htons(NORMAL);
         sendto(sockfd, &packet_buffer[next_seq_no%window_size], sizeof(packet_buffer[next_seq_no%window_size]), 0, (struct sockaddr *) &addr, sizeof(addr));
         
         //Se e' attivato il timer dinamico campiono per calcolare l'rtt
@@ -668,7 +669,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
           start_sample_RTT = clock();
           RTT_sample_enable = true;
         }
-        printf("Inviato pacchetto %ld\n",packet_buffer[next_seq_no%window_size].seq_no);
+        printf("Inviato pacchetto %d\n", ntohl(packet_buffer[next_seq_no%window_size].seq_no));
 
         //Se il next sequence number corrisponde con la base lancia il timer
         if(base == next_seq_no){
@@ -695,15 +696,15 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
           start_sample_RTT = clock();
           RTT_sample_enable = true;
         }
-        printf("Pacchetto %ld ritrasmesso\n",packet_buffer[i].seq_no);  
+        printf("Pacchetto %d ritrasmesso\n", ntohl(packet_buffer[i].seq_no));  
       }
     }
 
     //Controllo se ci sono ack
     if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len) > 0){ 
       if(!simulate_loss(loss_rate)){
-        printf("ACK %ld ricevuto, ricalcolo timer\n",ack.seq_no);
-        base = ack.seq_no;
+        printf("ACK %d ricevuto, ricalcolo timer\n", ntohl(ack.seq_no));
+        base = ntohl(ack.seq_no);
 
         //Azzero il contatore di tentativi di ritrasmissione in quanto se ricevo ACK il client e' vivo
         trial_counter=0;
@@ -748,8 +749,8 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
 
     //Invio il FIN solo se devo farlo per la prima volta o lo rinvio in caso di timeout per non inviarne inutilmente
     if(!FIN_sended){
-      data.type=FIN;
-      data.seq_no=next_seq_no;
+      data.type=htons(FIN);
+      data.seq_no=htonl(next_seq_no);
       sendto(sockfd, &data, sizeof(data), 0, (struct sockaddr *) &addr, sizeof(addr));
       FIN_sended=true;
 
@@ -774,7 +775,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
     //Attendo FINACK
     if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len)>0){
       if(!simulate_loss(loss_rate)){
-        if(ack.type==FIN){
+        if(ntohs(ack.type)==FIN){
           printf("Ho ricevuto FIN ACK\n");
           break;
         }
