@@ -286,10 +286,6 @@ int main(int argc, char *argv[]){
         }
       }
     }
-    else{
-      printf("Chiudo riferimento al socket nel padre\n");
-      close(child_sockfd);
-    }
   }
  
    exit(EXIT_SUCCESS);
