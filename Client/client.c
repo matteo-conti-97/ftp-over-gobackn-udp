@@ -302,7 +302,10 @@ void list(int sockfd, double timer, float loss_rate){
 
         //Se arriva il FIN esco
         if(data.type==FIN){
-          printf("\nHo ricevuto FIN\n");
+         if(data.length>0)
+            printf("%s\n", data.data);
+          else
+            printf("Ho ricevuto FIN\n");
           ack.type=FIN;
           ack.seq_no=data.seq_no;
           break;
@@ -353,7 +356,9 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   //Alloco il buffer della finestra
   if((packet_buffer=malloc(window_size*sizeof(struct segment_packet)))==NULL){
     perror("malloc fallita");
-    exit(EXIT_FAILURE);
+    data.length=strlen("Putt fallita: errore interno del client");
+    strcpy(data.data,"Put fallita: errore interno del client");
+    goto put_termination;
   }
 
   //Pulizia
@@ -375,7 +380,9 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   //Apro file
   if((fd = open(data.data, O_RDONLY, 0666))<0){
     perror("errore apertura/creazione file da ricevere controllare che il file sia presente sul server");
-    exit(EXIT_FAILURE);
+    data.length=strlen("Putt fallita: errore interno del client");
+    strcpy(data.data,"Put fallita: errore interno del client");
+    goto put_termination;
   }
 
   //Calcolo dimensione file
@@ -524,7 +531,12 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
     }         
   }
   
+  //Pulizia
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+
   //Termine operazione
+  put_termination:
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
@@ -689,7 +701,14 @@ void get(int sockfd, double timer, float loss_rate){
 
         //Se e' un FIN esco
         if(data.type==FIN){
-          printf("Ho ricevuto FIN\n");
+
+          //Se e' un FIN di errore printo l'errore, rimuovo il file sporco ed esco
+          if(data.length>0){
+            printf("%s\n", data.data);
+            system(rm_string);
+          }
+          else
+            printf("Ho ricevuto FIN\n");
           ack.type=FIN;
           ack.seq_no=data.seq_no;
           break;

@@ -52,7 +52,6 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
 
 void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, float loss_rate);
 
-
 int main(int argc, char *argv[]){
   int sockfd, child_sockfd, serv_port, window_size, len, child_len;
   struct sockaddr_in addr, child_addr;
@@ -254,15 +253,18 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   //Costruisco la stringa path del file da scaricare 
   if((path=malloc(strlen(file_name)))==NULL){
     perror("malloc fallita");
-    close(sockfd);
-    exit(EXIT_FAILURE);
+    data.length=strlen("Get fallita: errore interno del server");
+    strcpy(data.data,"Get fallita: errore interno del server");
+    goto get_termination;
   }
   sprintf(path,"./files/%s",file_name);
 
   //Alloco il buffer della finestra
   if((packet_buffer=malloc(window_size*sizeof(struct segment_packet)))==NULL){
     perror("malloc fallita");
-    exit(EXIT_FAILURE);
+    data.length=strlen("Get fallita: errore interno del server");
+    strcpy(data.data,"Get fallita: errore interno del server");
+    goto get_termination;
   }
 
   //Pulizia
@@ -274,8 +276,9 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   //Apro il file
   if((fd=open(path,O_RDONLY))<0){
     perror("errore apertura file da inviare"); 
-    close(sockfd);
-    exit(EXIT_FAILURE);
+    data.length=strlen("Get fallita: rrore nell'apertura del file controllare che sia presente sul server");
+    strcpy(data.data,"Get fallita: errore nell'apertura del file controllare che sia presente sul server");
+    goto get_termination;
   }
 
   //Calcolo dimensione file
@@ -366,7 +369,12 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
     }            
   }
 
+  //Pulizia
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+
   //Termine operazione
+  get_termination:
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
@@ -458,7 +466,14 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
       //Se arriva un pacchetto in ordine lo riscontro e aggiorno il numero di sequenza che mi aspetto
       if(data.seq_no==expected_seq_no){
         if(data.type==FIN){
-          printf("Ho ricevuto FIN\n");
+
+          //Se e' un FIN di errore printo l'errore, rimuovo il file sporco ed esco
+          if(data.length>0){
+            printf("%s\n", data.data);
+            system(rm_string);
+          }
+          else
+            printf("Ho ricevuto FIN\n");
           ack.type=FIN;
           ack.seq_no=data.seq_no;
           break;
@@ -519,7 +534,9 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
   //Alloco il buffer della finestra finestra
   if((packet_buffer=malloc(window_size*sizeof(struct segment_packet)))==NULL){
     perror("malloc fallita");
-    exit(EXIT_FAILURE);
+    data.length=strlen("List fallita: errore interno del server");
+    strcpy(data.data,"List fallita: errore interno del server");
+    goto list_termination;
   }
 
   //Pulizia
@@ -531,8 +548,9 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
   //Apro la directory contente i file
   if((d = opendir("./files"))==NULL){
     perror("errore apertura directory dei file");
-    close(sockfd);
-    exit(EXIT_FAILURE);
+    data.length=strlen("List fallita: errore interno del server");
+    strcpy(data.data,"List fallita: errore interno del server");
+    goto list_termination;
   }
 
   //Tengo traccia della testa della directory
@@ -635,7 +653,12 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
     } 
   }
   
+  //Pulizia
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+
   //Termine operazione
+  list_termination:
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
