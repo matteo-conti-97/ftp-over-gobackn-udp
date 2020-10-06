@@ -191,7 +191,7 @@ int main(int argc, char *argv[]){
     while(1){ 
 
       //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-      if(trial_counter>=5){
+      if(trial_counter>10){
         printf("Il client e' morto oppure il canale e' molto disturbato abort\n");
         close(child_sockfd);
         goto start;
@@ -286,10 +286,7 @@ int main(int argc, char *argv[]){
         }
       }
     }
-    else{
-      printf("Chiudo riferimento al socket nel padre\n");
-      close(child_sockfd);
-    }
+    
   }
  
    exit(EXIT_SUCCESS);
@@ -445,7 +442,10 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
 
     //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
     if(trial_counter>10){
-      printf("Il client e' morto oppure il canale e' molto disturbato tuttavia il file e' stato consegnato con successo\n");
+      if(ntohs(data.length)>0)
+        printf("Il client e' morto oppure il canale e' molto disturbato abort\n");
+      else
+        printf("Il client e' morto oppure il canale e' molto disturbato tuttavia il file e' stato consegnato con successo\n");
       break;
     }
 
@@ -526,7 +526,7 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
 
     //Se ci sono troppi errori di lettura lascio stare
     if(trial_counter>10){
-      printf("Il client e' morto oppure il canale e' molto disturbato\n");
+      printf("Il client e' morto oppure il canale e' molto disturbato abort\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -648,7 +648,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
 
     //Se ci sono troppe ritrasmissioni lascio stare
     if(trial_counter>10){
-      printf("Il client e' morto oppure il canale e' molto disturbato\n");
+      printf("Il client e' morto oppure il canale e' molto disturbato abort\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -743,7 +743,10 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
 
     //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
     if(trial_counter>10){
-      printf("Il client e' morto oppure il canale e' molto disturbato tuttavia la lista dei file e' stata consegnata con successo\n");
+      if(ntohs(data.length)>0)
+        printf("Il client e' morto oppure il canale e' molto disturbato abort\n");
+      else
+        printf("Il client e' morto oppure il canale e' molto disturbato tuttavia la lista dei file e' stata consegnata con successo\n");
       break;
     }
 

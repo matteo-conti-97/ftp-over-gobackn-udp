@@ -143,7 +143,7 @@ int main(int argc, char *argv[]){
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>=5){
+    if(trial_counter>10){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       exit(EXIT_FAILURE);
     }
@@ -347,7 +347,7 @@ void list(int sockfd, double timer, float loss_rate){
 
     //Se ci sono troppi errori di lettura lascio stare
     if(trial_counter>10){
-      printf("Il server e' morto oppure il canale e' molto disturbato\n");
+      printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -608,7 +608,10 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
     if(trial_counter>10){
-      printf("Il server e' morto oppure il canale e' molto disturbato tuttavia il file e' stato consegnato con successo\n");
+      if(ntohs(data.length)>0)
+        printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
+      else
+        printf("Il server e' morto oppure il canale e' molto disturbato tuttavia il file e' stato consegnato con successo\n");
       break;
     }
 
@@ -759,7 +762,7 @@ void get(int sockfd, double timer, float loss_rate){
 
     //Se ci sono troppi errori di lettura lascio stare
     if(trial_counter>10){
-      printf("Il server e' morto oppure il canale e' molto disturbato\n");
+      printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -786,6 +789,7 @@ void get(int sockfd, double timer, float loss_rate){
           }
           else
             printf("Ho ricevuto FIN\n");
+          
           ack.type=htons(FIN);
           ack.seq_no=data.seq_no;
           break;
