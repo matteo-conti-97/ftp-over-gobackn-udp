@@ -505,6 +505,7 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
 
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
+  ack.seq_no=-1;
   
   //Utile solo per la pulizia della directory in caso di errori
   rm_string=malloc(strlen(file_name)+3);
@@ -522,7 +523,10 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
 
     //Se ci sono troppi errori di lettura lascio stare
     if(trial_counter>10){
-      printf("Il client e' morto oppure il canale e' molto disturbato\n");
+      if(data.length>0)
+        printf("Il client e' morto oppure il canale e' molto disturbato, errore: %s", data.data);
+      else
+        printf("Il client e' morto oppure il canale e' molto disturbato\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -564,7 +568,11 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
         }
       }
       //Se arriva un pacchetto fuori ordine o corrotto invio l'ack della precedente iterazione
-
+      else{
+        ack.type=NORMAL;
+        ack.seq_no=expected_seq_no;
+      }
+      
       //Invio ack
       sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *) &addr, sizeof(addr));
       printf("ACK %ld inviato\n",ack.seq_no);

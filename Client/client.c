@@ -324,9 +324,11 @@ void list(int sockfd, double timer, float loss_rate){
     //Attendo ACK richiesta
     if(recv(sockfd,&ack, sizeof(ack), MSG_DONTWAIT)>0){
       if(!simulate_loss(loss_rate)){
-        printf("Ricevuto ack comando\n");
-        timer_enable=false;
-        break;
+        if(ack.type==LIST){
+          printf("Ricevuto ack comando\n");
+          timer_enable=false;
+          break;
+        }
       }
       else
         printf("PERDITA ACK COMANDO SIMULATA\n");
@@ -346,7 +348,10 @@ void list(int sockfd, double timer, float loss_rate){
 
     //Se ci sono troppi errori di lettura lascio stare
     if(trial_counter>10){
-      printf("Il server e' morto oppure il canale e' molto disturbato\n");
+      if(data.length>0)
+        printf("Il server e' morto oppure il canale e' molto disturbato, errore: %s", data.data);
+      else
+        printf("Il server e' morto oppure il canale e' molto disturbato\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -382,7 +387,11 @@ void list(int sockfd, double timer, float loss_rate){
         }
       }
       //Se arriva un pacchetto fuori ordine o corrotto non genero ack utilizzando quindi quello dell'iterazione precedente 
-
+      else{
+        ack.type=NORMAL;
+        ack.seq_no=expected_seq_no;
+      }
+      
       //Invio ack
       send(sockfd, &ack, sizeof(ack), 0);
       //printf("ACK %ld inviato\n",ack.seq_no);
@@ -493,9 +502,11 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
     //Attendo ACK richiesta
     if(recv(sockfd,&ack, sizeof(ack), MSG_DONTWAIT)>0){
       if(!simulate_loss(loss_rate)){
-        printf("Ricevuto ack comando\n");
-        timer_enable=false;
-        break;
+        if(ack.type==PUT){
+          printf("Ricevuto ack comando\n");
+          timer_enable=false;
+          break;
+        }
       }
       else
         printf("PERDITA ACK COMANDO SIMULATA\n");
@@ -738,9 +749,11 @@ void get(int sockfd, double timer, float loss_rate){
     //Attendo ACK richiesta
     if(recv(sockfd,&ack, sizeof(ack), MSG_DONTWAIT)>0){
       if(!simulate_loss(loss_rate)){
-        printf("Ricevuto ack comando\n");
-        timer_enable=false;
-        break;
+        if(ack.type==GET){
+          printf("Ricevuto ack comando\n");
+          timer_enable=false;
+          break;
+        }
       }
       else
         printf("PERDITA ACK COMANDO SIMULATA\n");
@@ -757,7 +770,10 @@ void get(int sockfd, double timer, float loss_rate){
 
     //Se ci sono troppi errori di lettura lascio stare
     if(trial_counter>10){
-      printf("Il server e' morto oppure il canale e' molto disturbato\n");
+      if(data.length>0)
+        printf("Il server e' morto oppure il canale e' molto disturbato, errore: %s", data.data);
+      else
+        printf("Il server e' morto oppure il canale e' molto disturbato\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -805,7 +821,10 @@ void get(int sockfd, double timer, float loss_rate){
         }
       }
       //Se arriva un pacchetto fuori ordine o corrotto invio l'ack della precedente iterazione
-
+      else{
+        ack.type=NORMAL;
+        ack.seq_no=expected_seq_no;
+      }
       //Invio ack
       send(sockfd, &ack, sizeof(ack), 0);
       printf("ACK %ld inviato\n",ack.seq_no);
