@@ -13,11 +13,12 @@
 #include <sys/time.h>
 #include <math.h>
 
-#define MAX_CHOICE_TIME 120
+#define MAX_TRIALS_NO 10
 #define DEFAULT_TIMER 50
+#define MAX_CHOICE_TIME 120
 #define NORMAL 10
 #define FIN 11
-#define SYN 14
+#define SYN 12
 #define MAXLINE 497
 #define PUT 1
 #define GET 2
@@ -143,7 +144,7 @@ int main(int argc, char *argv[]){
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>=5){
+    if(trial_counter>MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       exit(EXIT_FAILURE);
     }
@@ -152,8 +153,8 @@ int main(int argc, char *argv[]){
     if(!SYN_sended){
       //Invio SYN con numero di sequenza casuale come identificatore della connessione
       conn_req_no=lrand48();
-      data.seq_no=conn_req_no;
-      data.type=SYN;
+      data.seq_no=htonl(conn_req_no);
+      data.type=htons(SYN);
       if (send(sockfd, &data, sizeof(data), 0) < 0) {
         perror("errore in send richiesta connession syn");
         exit(EXIT_FAILURE);
@@ -186,7 +187,7 @@ int main(int argc, char *argv[]){
       if(!simulate_loss(loss_rate)){
 
          //Se l'identificatore non e' corretto il SYNACK non e' per me
-        if(data.seq_no==conn_req_no){
+        if(ntohl(data.seq_no)==conn_req_no){
           printf("Ricevuto SYNACK\n");
           timer_enable=false;
           break;
@@ -198,9 +199,9 @@ int main(int argc, char *argv[]){
   }
 
   //Invio ACKSYNACK
-  new_port=atoi(data.data);
-  ack.type=SYN;
-  ack.seq_no=conn_req_no;
+  new_port=ntohs(atoi(data.data));
+  ack.type=htons(SYN);
+  ack.seq_no=htonl(conn_req_no);
   if (send(sockfd, &ack, sizeof(ack), 0) < 0) {
     perror("errore in send ack_syn_ack");
     exit(EXIT_FAILURE);
@@ -276,7 +277,7 @@ void list(int sockfd, double timer, float loss_rate){
 
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
-  ack.seq_no=-1;
+  //ack.seq_no=htonl(-1);
 
   //Attivo timer dinamico
   if(timer<0){
@@ -287,7 +288,7 @@ void list(int sockfd, double timer, float loss_rate){
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>10){
+    if(trial_counter>MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       exit(EXIT_FAILURE);
     }
@@ -295,7 +296,7 @@ void list(int sockfd, double timer, float loss_rate){
     if(!command_sended){
       
       //Invia al server il pacchetto di richiesta
-      data.type=LIST;
+      data.type=htons(LIST);
       if(send(sockfd, &data, sizeof(data), 0) < 0) {
         perror("errore in send comando");
         exit(EXIT_FAILURE);
@@ -324,7 +325,7 @@ void list(int sockfd, double timer, float loss_rate){
     //Attendo ACK richiesta
     if(recv(sockfd,&ack, sizeof(ack), MSG_DONTWAIT)>0){
       if(!simulate_loss(loss_rate)){
-        if(ack.type==LIST){
+        if(ntohs(ack.type)==LIST){
           printf("Ricevuto ack comando\n");
           timer_enable=false;
           break;
@@ -339,7 +340,7 @@ void list(int sockfd, double timer, float loss_rate){
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
   trial_counter=0;
-  ack.seq_no=-1;
+  //ack.seq_no=htonl(-1);
 
   printf("Lista dei file su server:\n\n");
 
@@ -347,11 +348,8 @@ void list(int sockfd, double timer, float loss_rate){
   while(1){
 
     //Se ci sono troppi errori di lettura lascio stare
-    if(trial_counter>10){
-      if(data.length>0)
-        printf("Il server e' morto oppure il canale e' molto disturbato, errore: %s", data.data);
-      else
-        printf("Il server e' morto oppure il canale e' molto disturbato\n");
+    if(trial_counter>MAX_TRIALS_NO){
+      printf("Il server e' morto oppure il canale e' molto disturbato\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -365,15 +363,15 @@ void list(int sockfd, double timer, float loss_rate){
     if(!simulate_loss(loss_rate)){
 
       //Se arriva un pacchetto in ordine creo il relativo ack e aggiorno l'expected sequence number
-      if(data.seq_no==expected_seq_no){
+      if(ntohl(data.seq_no)==expected_seq_no){
 
         //Se arriva il FIN esco
-        if(data.type==FIN){
-         if(data.length>0)
+        if(ntohs(data.type)==FIN){
+         if(ntohs(data.length)>0)
             printf("%s\n", data.data);
           else
             printf("Ho ricevuto FIN\n");
-          ack.type=FIN;
+          ack.type=htons(FIN);
           ack.seq_no=data.seq_no;
           break;
         }
@@ -381,20 +379,20 @@ void list(int sockfd, double timer, float loss_rate){
         //Se arriva un dato printo su stdout
         else{
           printf("%s\n",data.data);
-          ack.type=NORMAL;
+          ack.type=htons(NORMAL);
           ack.seq_no=data.seq_no;
           expected_seq_no++;
         }
       }
-      //Se arriva un pacchetto fuori ordine o corrotto non genero ack utilizzando quindi quello dell'iterazione precedente 
+      //Se arriva un pacchetto fuori ordine invio l'ack con l'expected sequence number
       else{
-        ack.type=NORMAL;
-        ack.seq_no=expected_seq_no;
+        ack.type=htons(NORMAL);
+        ack.seq_no=htonl(expected_seq_no);
       }
-      
+
       //Invio ack
       send(sockfd, &ack, sizeof(ack), 0);
-      //printf("ACK %ld inviato\n",ack.seq_no);
+      //printf("ACK %d inviato\n", ntohl(ack.seq_no));
 
    }
     else
@@ -427,7 +425,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   //Alloco il buffer della finestra
   if((packet_buffer=malloc(window_size*sizeof(struct segment_packet)))==NULL){
     perror("malloc fallita");
-    data.length=strlen("Putt fallita: errore interno del client");
+    data.length=htons(strlen("Put fallita: errore interno del client"));
     strcpy(data.data,"Put fallita: errore interno del client");
     goto put_termination;
   }
@@ -436,7 +434,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   memset((void *)packet_buffer,0,sizeof(packet_buffer));
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
-  ack.seq_no=-1;
+  ack.seq_no=htonl(-1);
 
   //Scelta del file da caricare su server
   file_choice:
@@ -451,7 +449,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   //Apro file
   if((fd = open(data.data, O_RDONLY, 0666))<0){
     perror("errore apertura/creazione file da ricevere controllare che il file sia presente sul server");
-    data.length=strlen("Putt fallita: errore interno del client");
+    data.length=htons(strlen("Put fallita: errore interno del client"));
     strcpy(data.data,"Put fallita: errore interno del client");
     goto put_termination;
   }
@@ -465,7 +463,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>10){
+    if(trial_counter>MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(fd);
       exit(EXIT_FAILURE);
@@ -474,7 +472,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
     if(!command_sended){
   
       //Invia al server il pacchetto di richiesta
-      data.type=PUT;
+      data.type=htons(PUT);
       if(send(sockfd, &data, sizeof(data), 0) <0) {
         perror("errore in send file name");
         close(fd);
@@ -502,7 +500,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
     //Attendo ACK richiesta
     if(recv(sockfd,&ack, sizeof(ack), MSG_DONTWAIT)>0){
       if(!simulate_loss(loss_rate)){
-        if(ack.type==PUT){
+        if(ntohs(ack.type)==PUT){
           printf("Ricevuto ack comando\n");
           timer_enable=false;
           break;
@@ -517,13 +515,13 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
   trial_counter=0;
-  ack.seq_no=-1;
+  ack.seq_no=htonl(-1);
 
   //Invio dati
-  while((ack.seq_no+1)*497 < file_size){
+  while((ntohl(ack.seq_no)+1)*497 < file_size){
 
     //Se ci sono troppe ritrasmissioni lascio stare
-    if(trial_counter>10){
+    if(trial_counter>MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(sockfd);
       exit(EXIT_FAILURE);
@@ -531,18 +529,17 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
 
     //Se la finestra non e' piena preparo ed invio il pacchetto
     if(next_seq_no < base+window_size){ 
-      if((packet_buffer[next_seq_no%window_size].length = read(fd, packet_buffer[next_seq_no%window_size].data, MAXLINE)) > 0){
-        packet_buffer[next_seq_no%window_size].seq_no = next_seq_no;
-        packet_buffer[next_seq_no%window_size].type = NORMAL;
+      if((packet_buffer[next_seq_no%window_size].length = htons(read(fd, packet_buffer[next_seq_no%window_size].data, MAXLINE))) > 0){
+        packet_buffer[next_seq_no%window_size].seq_no = htonl(next_seq_no);
+        packet_buffer[next_seq_no%window_size].type = htons(NORMAL);
         send(sockfd, &packet_buffer[next_seq_no%window_size], sizeof(packet_buffer[next_seq_no%window_size]), 0);
-        printf("Inviato pacchetto %ld e iniziato campionamento\n",packet_buffer[next_seq_no%window_size].seq_no);
 
         //Se e' attivato il timer dinamico campiono per calcolare l'rtt
         if((dyn_timer_enable)&&(!RTT_sample_enable)){
           start_sample_RTT = clock();
           RTT_sample_enable = true;
         }
-        printf("Inviato pacchetto %ld\n",packet_buffer[next_seq_no%window_size].seq_no);
+        printf("Inviato pacchetto %d\n", ntohl(packet_buffer[next_seq_no%window_size].seq_no));
 
         //Se il next sequence number corrisponde con la base lancia il timer
         if(base == next_seq_no){
@@ -570,15 +567,15 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
           start_sample_RTT = clock();
           RTT_sample_enable = true;
         }
-        printf("Pacchetto %ld ritrasmesso\n",packet_buffer[i].seq_no);  
+        printf("Pacchetto %d ritrasmesso\n", ntohl(packet_buffer[i].seq_no));  
       }
     }
 
     //Controllo se ci sono ack
     if(recv(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT) > 0){ 
       if(!simulate_loss(loss_rate)){
-        printf("ACK %ld ricevuto, ricalcolo timer\n",ack.seq_no);
-        base = ack.seq_no;
+        printf("ACK %d ricevuto, ricalcolo timer\n", ntohl(ack.seq_no));
+        base = ntohl(ack.seq_no);
 
         //Azzero il contatore di tentativi di ritrasmissione in quanto se ricevo ACK il server e' vivo
         trial_counter=0;
@@ -616,15 +613,18 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>10){
-      printf("Il server e' morto oppure il canale e' molto disturbato tuttavia il file e' stato consegnato con successo\n");
+    if(trial_counter>MAX_TRIALS_NO){
+      if(ntohs(data.length)>0)
+        printf("Il server e' morto oppure il canale e' molto disturbato, errore: %s", data.data);
+      else
+        printf("Il server e' morto oppure il canale e' molto disturbato tuttavia il file e' stato consegnato con successo\n");
       break;
     }
 
     //Invio il FIN solo se devo farlo per la prima volta o lo rinvio in caso di timeout per non inviarne inutilmente
     if(!FIN_sended){
-      data.type=FIN;
-      data.seq_no=next_seq_no;
+      data.type=htons(FIN);
+      data.seq_no=htonl(next_seq_no);
       send(sockfd, &data, sizeof(data), 0);
       FIN_sended=true;
       
@@ -650,7 +650,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
     //Attendo FINACK
     if(recv(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT)>0){
       if(!simulate_loss(loss_rate)){
-        if(ack.type==FIN){
+        if(ntohs(ack.type)==FIN){
           printf("Ho ricevuto FIN ACK\n");
           break;
         }
@@ -675,7 +675,7 @@ void get(int sockfd, double timer, float loss_rate){
 
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
-  ack.seq_no=-1;
+  //ack.seq_no=htonl(-1);
 
   //Attivo timer dinamico
   if(timer<0){
@@ -709,7 +709,7 @@ void get(int sockfd, double timer, float loss_rate){
   while(1){
     
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>10){
+    if(trial_counter>MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(fd);
       system(rm_string);
@@ -719,7 +719,7 @@ void get(int sockfd, double timer, float loss_rate){
     if(!command_sended){
 
       //Invia al server il pacchetto di richiesta
-      data.type=GET;
+      data.type=htons(GET);
       if(send(sockfd, &data, sizeof(data), 0) <0) {
         perror("errore in send file name");
         close(fd);
@@ -749,7 +749,7 @@ void get(int sockfd, double timer, float loss_rate){
     //Attendo ACK richiesta
     if(recv(sockfd,&ack, sizeof(ack), MSG_DONTWAIT)>0){
       if(!simulate_loss(loss_rate)){
-        if(ack.type==GET){
+        if(ntohs(ack.type)==GET){
           printf("Ricevuto ack comando\n");
           timer_enable=false;
           break;
@@ -763,17 +763,14 @@ void get(int sockfd, double timer, float loss_rate){
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
   trial_counter=0;
-  ack.seq_no=-1;
+  //ack.seq_no=htonl(-1);
 
   //Ricevo dati
   while(1){
 
     //Se ci sono troppi errori di lettura lascio stare
-    if(trial_counter>10){
-      if(data.length>0)
-        printf("Il server e' morto oppure il canale e' molto disturbato, errore: %s", data.data);
-      else
-        printf("Il server e' morto oppure il canale e' molto disturbato\n");
+    if(trial_counter>MAX_TRIALS_NO){
+      printf("Il server e' morto oppure il canale e' molto disturbato\n");
       close(sockfd);
       exit(EXIT_FAILURE);
     }
@@ -788,46 +785,43 @@ void get(int sockfd, double timer, float loss_rate){
     if(!simulate_loss(loss_rate)){
 
       //Se arriva un pacchetto in ordine lo riscontro e aggiorno il numero di sequenza che mi aspetto
-      if(data.seq_no==expected_seq_no){
+      if(ntohl(data.seq_no)==expected_seq_no){
 
         //Se e' un FIN esco
-        if(data.type==FIN){
+        if(ntohs(data.type)==FIN){
 
           //Se e' un FIN di errore printo l'errore, rimuovo il file sporco ed esco
-          if(data.length>0){
+          if(ntohs(data.length)>0){
             printf("%s\n", data.data);
             system(rm_string);
           }
           else
             printf("Ho ricevuto FIN\n");
-          ack.type=FIN;
+          ack.type=htons(FIN);
           ack.seq_no=data.seq_no;
           break;
         }
 
         //Se non e' un FIN scrivo su file e continuo
         else{
-          data.data[data.length]=0;
-          printf("Ho ricevuto un dato di %d byte del pacchetto %ld\n", data.length, data.seq_no);
-          if((n=write(fd, data.data, data.length))!=data.length){
+          data.data[ntohs(data.length)]=0;
+          printf("Ho ricevuto un dato di %d byte del pacchetto %d\n", ntohs(data.length), ntohl(data.seq_no));
+          if((n=write(fd, data.data, ntohs(data.length)))!=ntohs(data.length)){
             perror("Non ho scritto tutto su file mi riposiziono\n");
             lseek(fd,0,SEEK_CUR-n);
             continue;
           }
           printf("Ho scritto %d byte sul file\n",n);
-          ack.type=NORMAL;
+          ack.type=htons(NORMAL);
           ack.seq_no=data.seq_no;
           expected_seq_no++;
         }
       }
-      //Se arriva un pacchetto fuori ordine o corrotto invio l'ack della precedente iterazione
-      else{
-        ack.type=NORMAL;
-        ack.seq_no=expected_seq_no;
-      }
+      
+
       //Invio ack
       send(sockfd, &ack, sizeof(ack), 0);
-      printf("ACK %ld inviato\n",ack.seq_no);
+      printf("ACK %d inviato\n", ntohl(ack.seq_no));
 
    }
     else
