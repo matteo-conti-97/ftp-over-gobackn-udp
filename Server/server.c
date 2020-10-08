@@ -308,6 +308,10 @@ int main(int argc, char *argv[]){
         }
       }
     }
+    else
+      //Chiudo il socket del figlio nel padre in quanto a lui non serve
+      close(child_sockfd);
+    
   }
  
    exit(EXIT_SUCCESS);
