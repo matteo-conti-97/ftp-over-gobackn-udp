@@ -16,10 +16,12 @@
 #define MAX_TRIALS_NO 10
 #define DEFAULT_TIMER 50
 #define MAX_CHOICE_TIME 120
+#define MAXLINE 497
+//Tipi
 #define NORMAL 10
 #define FIN 11
 #define SYN 12
-#define MAXLINE 497
+
 #define PUT 1
 #define GET 2
 #define LIST 3
@@ -107,7 +109,7 @@ int main(int argc, char *argv[]){
     syn_timer=timer;
 
   //Seed per la perdita simulata
-  srand48(2345);
+  srand48(time(NULL));
 
   //Creazione socket
   if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { 
@@ -144,7 +146,7 @@ int main(int argc, char *argv[]){
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       exit(EXIT_FAILURE);
     }
@@ -184,17 +186,17 @@ int main(int argc, char *argv[]){
 
     //Attendo SYNACK
     if(recv(sockfd, &data, sizeof(data), MSG_DONTWAIT)>0){
-      if(!simulate_loss(loss_rate)){
+      //if(!simulate_loss(loss_rate)){
 
          //Se l'identificatore non e' corretto il SYNACK non e' per me
-        if(ntohl(data.seq_no)==conn_req_no){
+        if((ntohl(data.seq_no)==conn_req_no)&&(ntohs(data.type)==SYN)){
           printf("Ricevuto SYNACK\n");
           timer_enable=false;
           break;
         }
-      }
-      else
-        printf("PERDITA SYNACK SIMULATA\n");
+      //}
+      //else
+        //printf("PERDITA SYNACK SIMULATA\n");
     }
   }
 
@@ -288,7 +290,7 @@ void list(int sockfd, double timer, float loss_rate){
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       exit(EXIT_FAILURE);
     }
@@ -324,15 +326,15 @@ void list(int sockfd, double timer, float loss_rate){
 
     //Attendo ACK richiesta
     if(recv(sockfd,&ack, sizeof(ack), MSG_DONTWAIT)>0){
-      if(!simulate_loss(loss_rate)){
+      //if(!simulate_loss(loss_rate)){
         if(ntohs(ack.type)==LIST){
           printf("Ricevuto ack comando\n");
           timer_enable=false;
           break;
         }
-      }
-      else
-        printf("PERDITA ACK COMANDO SIMULATA\n");
+      //}
+      //else
+        //printf("PERDITA ACK COMANDO SIMULATA\n");
     }
   }
 
@@ -348,7 +350,7 @@ void list(int sockfd, double timer, float loss_rate){
   while(1){
 
     //Se ci sono troppi errori di lettura lascio stare
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato\n");
       close(sockfd);
       exit(EXIT_FAILURE);
@@ -463,7 +465,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(fd);
       exit(EXIT_FAILURE);
@@ -499,15 +501,15 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
 
     //Attendo ACK richiesta
     if(recv(sockfd,&ack, sizeof(ack), MSG_DONTWAIT)>0){
-      if(!simulate_loss(loss_rate)){
+      //if(!simulate_loss(loss_rate)){
         if(ntohs(ack.type)==PUT){
           printf("Ricevuto ack comando\n");
           timer_enable=false;
           break;
         }
-      }
-      else
-        printf("PERDITA ACK COMANDO SIMULATA\n");
+      //}
+      //else
+        //printf("PERDITA ACK COMANDO SIMULATA\n");
     }
   }
 
@@ -521,7 +523,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   while((ntohl(ack.seq_no)+1)*497 < file_size){
 
     //Se ci sono troppe ritrasmissioni lascio stare
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(sockfd);
       exit(EXIT_FAILURE);
@@ -613,7 +615,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       if(ntohs(data.length)>0)
         printf("Il server e' morto oppure il canale e' molto disturbato, errore: %s", data.data);
       else
@@ -649,14 +651,14 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
 
     //Attendo FINACK
     if(recv(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT)>0){
-      if(!simulate_loss(loss_rate)){
+      //if(!simulate_loss(loss_rate)){
         if(ntohs(ack.type)==FIN){
           printf("Ho ricevuto FIN ACK\n");
           break;
         }
-      }
-      else
-        printf("PERDITA ACK FINALE SIMULATA\n");
+      //}
+      //else
+        //printf("PERDITA ACK FINALE SIMULATA\n");
     }
   }
   close(fd);
@@ -709,7 +711,7 @@ void get(int sockfd, double timer, float loss_rate){
   while(1){
     
     //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato ritenta piu' tardi\n");
       close(fd);
       system(rm_string);
@@ -748,15 +750,15 @@ void get(int sockfd, double timer, float loss_rate){
 
     //Attendo ACK richiesta
     if(recv(sockfd,&ack, sizeof(ack), MSG_DONTWAIT)>0){
-      if(!simulate_loss(loss_rate)){
+      //if(!simulate_loss(loss_rate)){
         if(ntohs(ack.type)==GET){
           printf("Ricevuto ack comando\n");
           timer_enable=false;
           break;
         }
-      }
-      else
-        printf("PERDITA ACK COMANDO SIMULATA\n");
+      //}
+      //else
+        //printf("PERDITA ACK COMANDO SIMULATA\n");
     }
   }
 
@@ -769,7 +771,7 @@ void get(int sockfd, double timer, float loss_rate){
   while(1){
 
     //Se ci sono troppi errori di lettura lascio stare
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato\n");
       close(sockfd);
       exit(EXIT_FAILURE);

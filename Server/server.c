@@ -15,10 +15,10 @@
 #include <time.h>
 #include <math.h>
 
-#define SYN 12
 #define MAX_TRIALS_NO 10
 #define DEFAULT_TIMER 50
 #define MAX_CHOICE_TIME 140
+#define MAXLINE 497
 //Tipi di dato
 #define NORMAL 10
 #define FIN 11
@@ -52,7 +52,7 @@ void sig_alrm_handler(int signum);
 
 void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, float loss_rate, char *file_name);
 
-void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, char *file_name);
+void put(int sockfd, struct sockaddr_in addr, float loss_rate, char *file_name);
 
 void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, float loss_rate);
 
@@ -116,7 +116,7 @@ int main(int argc, char *argv[]){
     synack_timer=timer;
 
   //Seed per la perdita simulata
-  srand48(2345);
+  srand48(time(NULL));
 
   //Creazione socket
   if ((sockfd = socket(AF_INET, SOCK_DGRAM, 0)) < 0) { 
@@ -162,6 +162,13 @@ int main(int argc, char *argv[]){
       exit(EXIT_FAILURE);
     }
 
+    if(ntohs(data.type)!=SYN)
+      continue;
+    /*if(simulate_loss(loss_rate)){
+      printf("Perdita SYN simulata\n");
+      continue;
+    }*/
+
     conn_req_no=ntohl(data.seq_no);
 
     //Creo il socket del figlio dedicato al client
@@ -195,7 +202,7 @@ int main(int argc, char *argv[]){
     while(1){ 
 
       //Se faccio troppi tentativi lascio stare probabilmente il server e' morto
-      if(trial_counter>MAX_TRIALS_NO){
+      if(trial_counter>=MAX_TRIALS_NO){
         printf("Il client e' morto oppure il canale e' molto disturbato abort\n");
         close(child_sockfd);
         goto start;
@@ -219,11 +226,11 @@ int main(int argc, char *argv[]){
       }
 
       //Timeout
-      if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > timer) && (timer_enable)){ 
+      if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > synack_timer) && (timer_enable)){ 
         timer_sample = clock();
 
         if(dyn_timer_enable)
-          timer=timer*2;
+          synack_timer=synack_timer*2;
 
         SYNACK_sended=false;
         trial_counter++;
@@ -232,15 +239,16 @@ int main(int argc, char *argv[]){
 
       //Attendo ack syn ack
       if ((recvfrom(sockfd, &ack, sizeof(ack), MSG_DONTWAIT, (struct sockaddr *)&addr, &len)) > 0) {
-        if(!simulate_loss(loss_rate)){
+        //if(!simulate_loss(loss_rate)){
           //Controllo che sia la richiesta corretta
-          if(ntohl(ack.seq_no)==conn_req_no){
+          if((ntohl(ack.seq_no)==conn_req_no)&&(ntohs(ack.type)==SYN)){
+            SYNACK_sended=false;
             printf("ACKSYNACK ricevuto\n");
             break;
           }
-        }
-        else
-          printf("PERDITA ACKSYNACK SIMULATA\n");
+        //}
+        //else
+          //printf("PERDITA ACKSYNACK SIMULATA\n");
       }
       
     }
@@ -249,6 +257,8 @@ int main(int argc, char *argv[]){
     if ((pid = fork()) == 0){
       printf("Sono nel figlio\n");
       while(1){
+
+        //Attesa comando
         alarm(MAX_CHOICE_TIME);
         if ((recvfrom(child_sockfd, &data, sizeof(data), 0, (struct sockaddr *)&child_addr, &child_len)) < 0) {
           perror("errore in recvfrom comando");
@@ -257,33 +267,42 @@ int main(int argc, char *argv[]){
         }
 
         switch(ntohs(data.type)){
+
           case PUT:
             alarm(0);
             ack.type=htons(PUT);
+
+            //ACK comando
             if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
               exit(EXIT_FAILURE);
             }
-            put(child_sockfd, child_addr, timer, loss_rate, data.data);
+            put(child_sockfd, child_addr, loss_rate, data.data);
             break;
+
           case GET:
             alarm(0);
             ack.type=htons(GET);
+            //ACK comando
             if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
               exit(EXIT_FAILURE);
             }
             get(child_sockfd, child_addr, timer, window_size, loss_rate, data.data);
             break;
+
           case LIST:
             alarm(0);
             ack.type=htons(LIST);
+
+            //ACK comando
             if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
               exit(EXIT_FAILURE);
             }
             list(child_sockfd, child_addr, timer, window_size, loss_rate);
             break;
+
           default:
             break;
         }
@@ -351,7 +370,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   while((ntohl(ack.seq_no)+1)*497 < file_size){
 
     //Se ci sono troppe ritrasmissioni lascio stare
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       printf("Il client e' morto oppure il canale e' molto disturbato\n");
       close(sockfd);
       exit(EXIT_FAILURE);
@@ -443,7 +462,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       if(ntohs(data.length)>0)
         printf("Il client e' morto oppure il canale e' molto disturbato, errore: %s", data.data);
       else
@@ -494,7 +513,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   exit(EXIT_SUCCESS);
 }
 
-void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, char *file_name){
+void put(int sockfd, struct sockaddr_in addr, float loss_rate, char *file_name){
   int n, fd, trial_counter=0, len=sizeof(addr);
   struct segment_packet data;
   struct ack_packet ack;
@@ -528,7 +547,7 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
   while(1){
 
     //Se ci sono troppi errori di lettura lascio stare
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       printf("Il client e' morto oppure il canale e' molto disturbato, errore: %s", data.data);
       close(sockfd);
       exit(EXIT_FAILURE);
@@ -597,7 +616,7 @@ void put(int sockfd, struct sockaddr_in addr, double timer, float loss_rate, cha
 void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, float loss_rate){
   DIR *d;
   struct dirent *dir;
-  off_t head, cur;
+  off_t head;
   long num_of_files=0, base=0,next_seq_no=0;
   int trial_counter=0, addr_len=sizeof(addr);
   struct segment_packet data;
@@ -653,7 +672,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
   while((ntohl(ack.seq_no)+1)<num_of_files){
 
     //Se ci sono troppe ritrasmissioni lascio stare
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       printf("Il client e' morto oppure il canale e' molto disturbato\n");
       close(sockfd);
       exit(EXIT_FAILURE);
@@ -748,7 +767,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
   while(1){
 
     //Se faccio troppi tentativi lascio stare probabilmente il client e' morto
-    if(trial_counter>MAX_TRIALS_NO){
+    if(trial_counter>=MAX_TRIALS_NO){
       if(ntohs(data.length)>0)
         printf("Il client e' morto oppure il canale e' molto disturbato, errore: %s", data.data);
       else
