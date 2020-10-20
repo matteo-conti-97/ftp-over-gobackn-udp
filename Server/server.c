@@ -216,7 +216,6 @@ int main(int argc, char *argv[]){
           goto start;
         }
 
-        //Se il timer scade probabilmente e' troppo breve, lo raddoppio
         SYNACK_sended=true;
 
         //Start timer
@@ -229,6 +228,7 @@ int main(int argc, char *argv[]){
       if(((double)(clock()-timer_sample)*1000/CLOCKS_PER_SEC > synack_timer) && (timer_enable)){ 
         timer_sample = clock();
 
+        //Se il timer scade probabilmente e' troppo breve, lo raddoppio
         if(dyn_timer_enable)
           synack_timer=synack_timer*2;
 
@@ -255,7 +255,7 @@ int main(int argc, char *argv[]){
 
     //Fork del figlio
     if ((pid = fork()) == 0){
-      printf("Sono nel figlio\n");
+      //printf("Sono nel figlio\n");
       while(1){
 
         //Attesa comando
