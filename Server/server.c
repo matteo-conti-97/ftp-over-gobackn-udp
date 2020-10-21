@@ -573,21 +573,21 @@ void put(int sockfd, struct sockaddr_in addr, float loss_rate, char *file_name){
             printf("%s\n", data.data);
             system(rm_string);
           }
-          else
-            printf("Ho ricevuto FIN\n");
+          //else
+            //printf("Ho ricevuto FIN\n");
           ack.type=htons(FIN);
           ack.seq_no=data.seq_no;
           break;
         }
         else{
           data.data[ntohs(data.length)]=0;
-          printf("Ho ricevuto un dato di %d byte del pacchetto %d\n", ntohs(data.length), ntohl(data.seq_no));
+          //printf("Ho ricevuto un dato di %d byte del pacchetto %d\n", ntohs(data.length), ntohl(data.seq_no));
           if((n=write(fd, data.data, ntohs(data.length)))!=ntohs(data.length)){
             perror("Non ho scritto tutto su file mi riposiziono\n");
             lseek(fd,0,SEEK_CUR-n);
             continue;
           }
-          printf("Ho scritto %d byte sul file\n",n);
+          //printf("Ho scritto %d byte sul file\n",n);
           ack.type=htons(NORMAL);
           ack.seq_no=data.seq_no;
           expected_seq_no++;
@@ -601,11 +601,11 @@ void put(int sockfd, struct sockaddr_in addr, float loss_rate, char *file_name){
 
       //Invio ack
       sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *) &addr, sizeof(addr));
-      printf("ACK %d inviato\n", ntohl(ack.seq_no));
+      //printf("ACK %d inviato\n", ntohl(ack.seq_no));
 
    }
-    else
-      printf("PERDITA PACCHETTO SIMULATA\n");
+    //else
+      //printf("PERDITA PACCHETTO SIMULATA\n");
   } 
 
   //Invio ack finale
