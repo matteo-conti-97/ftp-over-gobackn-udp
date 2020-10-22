@@ -328,6 +328,12 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   double sample_RTT=0, estimated_RTT=0, dev_RTT=0;
   bool dyn_timer_enable=false, timer_enable=false, RTT_sample_enable=false, FIN_sended=false;
 
+  //Pulizia
+  memset((void *)packet_buffer,0,sizeof(packet_buffer));
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  ack.seq_no=htonl(-1);
+
   //Attivo timer dinamico
   if(timer<0){
     dyn_timer_enable=true;
@@ -350,12 +356,6 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
     strcpy(data.data,"Get fallita: errore interno del server");
     goto get_termination;
   }
-
-  //Pulizia
-  memset((void *)packet_buffer,0,sizeof(packet_buffer));
-  memset((void *)&ack,0,sizeof(ack));
-  memset((void *)&data,0,sizeof(data));
-  ack.seq_no=htonl(-1);
 
   //Apro il file
   if((fd=open(path,O_RDONLY))<0){
@@ -392,7 +392,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
           start_sample_RTT = clock();
           RTT_sample_enable = true;
         }
-        printf("Inviato pacchetto %d\n", ntohl(packet_buffer[next_seq_no%window_size].seq_no));
+        //printf("Inviato pacchetto %d\n", ntohl(packet_buffer[next_seq_no%window_size].seq_no));
 
         //Se il next sequence number corrisponde con la base lancia il timer
         if(base == next_seq_no){
@@ -420,14 +420,14 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
           start_sample_RTT = clock();
           RTT_sample_enable = true;
         }
-        printf("Pacchetto %d ritrasmesso\n", ntohl(packet_buffer[i].seq_no));  
+        //printf("Pacchetto %d ritrasmesso\n", ntohl(packet_buffer[i].seq_no));  
       }
     }
 
     //Controllo se ci sono ack
     if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len) > 0){ 
       if(!simulate_loss(loss_rate)){
-        printf("ACK %d ricevuto\n", ntohl(ack.seq_no));
+        //printf("ACK %d ricevuto\n", ntohl(ack.seq_no));
         base = ntohl(ack.seq_no);
 
         //Azzero il contatore di tentativi di ritrasmissione in quanto se ricevo ACK il client e' vivo
@@ -437,23 +437,23 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
         if((dyn_timer_enable)&&(RTT_sample_enable==1)){
           RTT_sample_enable = false;
           sample_RTT=(double)(clock()-start_sample_RTT)*1000/CLOCKS_PER_SEC;
-          printf("SAMPLE RTT %f\n", sample_RTT);
+          //printf("SAMPLE RTT %f\n", sample_RTT);
           estimated_RTT=(double)(0.875*estimated_RTT)+(0.125*sample_RTT);
-          printf("ESTIMATED RTT %f\n", estimated_RTT);
+          //printf("ESTIMATED RTT %f\n", estimated_RTT);
           dev_RTT=(double)(0.75*dev_RTT)+(0.25*fabs(sample_RTT-estimated_RTT));
-          printf("DEV RTT %f\n", dev_RTT);
+          //printf("DEV RTT %f\n", dev_RTT);
           timer=(double)estimated_RTT+4*dev_RTT;
-          printf("Nuovo timer %f\n",timer);
+          //printf("Nuovo timer %f\n",timer);
           //timer = (double)(clock()-sample_RTT)*1000/CLOCKS_PER_SEC; 
         } 
         //Stop del timer associato al pacchetto piu' vecchio della finestra 
         if(base == next_seq_no){
           timer_enable = false;
-          printf("Ho fermato il timer\n");
+          //printf("Ho fermato il timer\n");
         }
       }
-      else
-        printf("PERDITA ACK SIMULATA\n"); 
+      //else
+        //printf("PERDITA ACK SIMULATA\n"); 
     }            
   }
 
@@ -484,7 +484,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
       //Start timer
       timer_sample = clock();
       timer_enable = true;
-      printf("Inviato FIN\n");
+      //printf("Inviato FIN\n");
     } 
 
     //Timeout
@@ -496,24 +496,24 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
         timer=timer*2;
       FIN_sended=false;
       trial_counter++;
-      printf("Timeout FIN\n");
+      //printf("Timeout FIN\n");
     }
 
     //Attendo FINACK
     if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len)>0){
       if(!simulate_loss(loss_rate)){
         if(ntohs(ack.type)==FIN){
-          printf("Ho ricevuto FIN ACK\n");
+          //printf("Ho ricevuto FIN ACK\n");
           break;
         }
       }
-      else
-        printf("PERDITA ACK FINALE SIMULATA\n");
+      //else
+        //printf("PERDITA ACK FINALE SIMULATA\n");
     }
   }
   close(fd);
   close(sockfd);
-  printf("Get terminata\n");
+  printf("\nGet terminata\n");
   exit(EXIT_SUCCESS);
 }
 
@@ -525,16 +525,17 @@ void put(int sockfd, struct sockaddr_in addr, float loss_rate, char *file_name){
   char *rm_string;
   char *path;
 
+  //Pulizia
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  //ack.seq_no=htonl(-1);
+
   if((path=malloc(strlen(file_name)))==NULL){
     perror("malloc fallita");
     close(sockfd);
     exit(EXIT_FAILURE);
   }
   sprintf(path,"./files/%s",file_name);
-
-  memset((void *)&ack,0,sizeof(ack));
-  memset((void *)&data,0,sizeof(data));
-  //ack.seq_no=htonl(-1);
   
   //Utile solo per la pulizia della directory in caso di errori
   rm_string=malloc(strlen(file_name)+3);
@@ -610,10 +611,10 @@ void put(int sockfd, struct sockaddr_in addr, float loss_rate, char *file_name){
 
   //Invio ack finale
   sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *) &addr, sizeof(addr));
-  printf("FIN ACK inviato\n");
+  //printf("FIN ACK inviato\n");
   close(fd);
   close(sockfd);
-  printf("\nPUT terminata\n\n");
+  printf("\nPut terminata\n\n");
   exit(EXIT_SUCCESS);
 }
 
@@ -667,7 +668,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
       continue;
     num_of_files++;
   }
-  printf("numero di file %ld\n",num_of_files);
+  //printf("numero di file %ld\n",num_of_files);
 
   //Mi riposiziono
   seekdir(d,head);
