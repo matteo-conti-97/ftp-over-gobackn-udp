@@ -136,7 +136,7 @@ int main(int argc, char *argv[]){
     exit(EXIT_FAILURE);
   }
 
-  //Per non usare sempre sendto e recvfrom
+  //Per fissare le componenti del server
   if (connect(sockfd, (struct sockaddr *) &servaddr, sizeof(servaddr)) < 0) {
     perror("errore in connect");
     exit(EXIT_FAILURE);
@@ -220,7 +220,7 @@ int main(int argc, char *argv[]){
     exit(EXIT_FAILURE);
   }
 
-  // Per non usare sempre sendto e recvfrom
+  //Per fissare le componenti del server
   if (connect(sockfd, (struct sockaddr *) &child_addr, sizeof(child_addr)) < 0) {
     perror("errore in connect");
     exit(EXIT_FAILURE);
