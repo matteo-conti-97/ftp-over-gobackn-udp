@@ -17,7 +17,7 @@
 
 #define MAX_TRIALS_NO 10
 #define DEFAULT_TIMER 50
-#define MAX_CHOICE_TIME 140
+#define MAX_CHOICE_TIME 130
 #define MAXLINE 497
 //Tipi di dato
 #define NORMAL 10
