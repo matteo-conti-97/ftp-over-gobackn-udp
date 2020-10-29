@@ -695,7 +695,7 @@ void get(int sockfd, double timer, float loss_rate){
     goto file_choice;
   }
 
-  printf("E' stato scelto %s \n", data.data);
+  //printf("E' stato scelto %s \n", data.data);
 
   //Utile solo per la pulizia della directory in caso di errori
   rm_string=malloc(strlen(data.data)+3);
