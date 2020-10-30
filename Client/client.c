@@ -70,7 +70,7 @@ int main(int argc, char *argv[]){
 
   //Controllo numero di argomenti
   if (argc < 6) { 
-    fprintf(stderr, "utilizzo: client <indirizzo IPv4 server> <porta server> <dimensione finestra> <probabilita' perdita (float, -1 for 0)> <timeout (in ms double, -1 for dynamic timer)>\n");
+    fprintf(stderr, "utilizzo: client <indirizzo IPv4 server> <porta server> <dimensione finestra> <probabilita' perdita (float 0.x, -1 for 0)> <timeout (in ms double, -1 for dynamic timer)>\n");
     exit(EXIT_FAILURE);
   }
 
@@ -394,14 +394,14 @@ void list(int sockfd, double timer, float loss_rate){
 
       //Invio ack
       send(sockfd, &ack, sizeof(ack), 0);
-      //printf("ACK %d inviato\n", ntohl(ack.seq_no));
+      printf("ACK %d inviato\n", ntohl(ack.seq_no));
 
    }
     else
       printf("PERDITA PACCHETTO SIMULATA\n");
   } 
 
-  //Invio ack finale
+  //Invio FINACK finale
   send(sockfd, &ack, sizeof(ack), 0);
   printf("FIN ACK inviato\n");
   printf("\nLIST terminata\n\n");
@@ -651,14 +651,14 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
 
     //Attendo FINACK
     if(recv(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT)>0){
-      //if(!simulate_loss(loss_rate)){
+      if(!simulate_loss(loss_rate)){
         if(ntohs(ack.type)==FIN){
           printf("Ho ricevuto FIN ACK\n");
           break;
         }
-      //}
-      //else
-        //printf("PERDITA ACK FINALE SIMULATA\n");
+      }
+      else
+        printf("PERDITA ACK FINALE SIMULATA\n");
     }
   }
   close(fd);
@@ -813,7 +813,7 @@ void get(int sockfd, double timer, float loss_rate){
             lseek(fd,0,SEEK_CUR-n);
             continue;
           }
-          printf("Ho scritto %d byte sul file\n",n);
+          //printf("Ho scritto %d byte sul file\n",n);
           ack.type=htons(NORMAL);
           ack.seq_no=data.seq_no;
           expected_seq_no++;
@@ -830,7 +830,7 @@ void get(int sockfd, double timer, float loss_rate){
       printf("PERDITA PACCHETTO SIMULATA\n");
   } 
 
-  //Invio ack finale
+  //Invio FINACK finale
   send(sockfd, &ack, sizeof(ack), 0);
   printf("FIN ACK inviato\n");
   close(fd);
