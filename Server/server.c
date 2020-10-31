@@ -444,7 +444,6 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
           //printf("DEV RTT %f\n", dev_RTT);
           timer=(double)estimated_RTT+4*dev_RTT;
           //printf("Nuovo timer %f\n",timer);
-          //timer = (double)(clock()-sample_RTT)*1000/CLOCKS_PER_SEC; 
         } 
         //Stop del timer associato al pacchetto piu' vecchio della finestra 
         if(base == next_seq_no){
@@ -750,7 +749,6 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
           //printf("DEV RTT %f\n", dev_RTT);
           timer=(double)estimated_RTT+4*dev_RTT;
           //printf("Nuovo timer %f\n",timer);
-          //timer = (double)(clock()-sample_RTT)*1000/CLOCKS_PER_SEC; 
         } 
         //Stop del timer associato al pacchetto piu' vecchio della finestra 
         if(base == next_seq_no){

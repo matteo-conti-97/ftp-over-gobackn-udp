@@ -394,11 +394,11 @@ void list(int sockfd, double timer, float loss_rate){
 
       //Invio ack
       send(sockfd, &ack, sizeof(ack), 0);
-      printf("ACK %d inviato\n", ntohl(ack.seq_no));
+      //printf("ACK %d inviato\n", ntohl(ack.seq_no));
 
    }
-    else
-      printf("PERDITA PACCHETTO SIMULATA\n");
+    //else
+      //printf("PERDITA PACCHETTO SIMULATA\n");
   } 
 
   //Invio FINACK finale
@@ -586,14 +586,13 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
         if((dyn_timer_enable)&&(RTT_sample_enable==1)){
           RTT_sample_enable = false;
           sample_RTT=(double)(clock()-start_sample_RTT)*1000/CLOCKS_PER_SEC;
-          printf("SAMPLE RTT %f\n", sample_RTT);
+          //printf("SAMPLE RTT %f\n", sample_RTT);
           estimated_RTT=(double)(0.875*estimated_RTT)+(0.125*sample_RTT);
-          printf("ESTIMATED RTT %f\n", estimated_RTT);
+          //printf("ESTIMATED RTT %f\n", estimated_RTT);
           dev_RTT=(double)(0.75*dev_RTT)+(0.25*fabs(sample_RTT-estimated_RTT));
-          printf("DEV RTT %f\n", dev_RTT);
+          //printf("DEV RTT %f\n", dev_RTT);
           timer=(double)estimated_RTT+4*dev_RTT;
-          printf("Nuovo timer %f\n",timer);
-          //timer = (double)(clock()-sample_RTT)*1000/CLOCKS_PER_SEC; 
+          //printf("Nuovo timer %f\n",timer);
         } 
         //Stop del timer associato al pacchetto piu' vecchio della finestra 
         if(base == next_seq_no){
