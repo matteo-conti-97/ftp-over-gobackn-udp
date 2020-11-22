@@ -332,7 +332,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   memset((void *)packet_buffer,0,sizeof(packet_buffer));
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
-  ack.seq_no=htonl(-1);
+  //ack.seq_no=htonl(-1);
 
   //Attivo timer dinamico
   if(timer<0){
@@ -428,7 +428,7 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
     if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len) > 0){ 
       if(!simulate_loss(loss_rate)){
         //printf("ACK %d ricevuto\n", ntohl(ack.seq_no));
-        base = ntohl(ack.seq_no);
+        base = ntohl(ack.seq_no)+1;
 
         //Azzero il contatore di tentativi di ritrasmissione in quanto se ricevo ACK il client e' vivo
         trial_counter=0;
@@ -527,7 +527,7 @@ void put(int sockfd, struct sockaddr_in addr, float loss_rate, char *file_name){
   //Pulizia
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
-  //ack.seq_no=htonl(-1);
+  ack.seq_no=htonl(-1);
 
   if((path=malloc(strlen(file_name)))==NULL){
     perror("malloc fallita");
@@ -648,7 +648,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
   memset((void *)packet_buffer,0,sizeof(packet_buffer));
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
-  ack.seq_no=htonl(-1);
+  //ack.seq_no=htonl(-1);
 
   //Apro la directory contente i file
   if((d = opendir("./files"))==NULL){
@@ -733,7 +733,7 @@ void list(int sockfd, struct sockaddr_in addr, double timer, int window_size, fl
     if(recvfrom(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT, (struct sockaddr *) &addr, &addr_len) > 0){ 
       if(!simulate_loss(loss_rate)){
         printf("ACK %d ricevuto, ricalcolo timer\n", ntohl(ack.seq_no));
-        base = ntohl(ack.seq_no);
+        base = ntohl(ack.seq_no)+1;
 
         //Azzero il contatore di tentativi di ritrasmissione in quanto se ricevo ACK il client e' vivo
         trial_counter=0;
