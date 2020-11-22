@@ -342,7 +342,7 @@ void list(int sockfd, double timer, float loss_rate){
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
   trial_counter=0;
-  //ack.seq_no=htonl(-1);
+  ack.seq_no=htonl(-1);
 
   printf("Lista dei file su server:\n\n");
 
@@ -436,7 +436,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   memset((void *)packet_buffer,0,sizeof(packet_buffer));
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
-  ack.seq_no=htonl(-1);
+  //ack.seq_no=htonl(-1);
 
   //Scelta del file da caricare su server
   file_choice:
@@ -517,7 +517,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
   trial_counter=0;
-  ack.seq_no=htonl(-1);
+  //ack.seq_no=htonl(-1);
 
   //Invio dati
   while((ntohl(ack.seq_no)+1)*497 < file_size){
@@ -577,7 +577,7 @@ void put(int sockfd, double timer, int window_size, float loss_rate){
     if(recv(sockfd, &ack, sizeof(struct ack_packet), MSG_DONTWAIT) > 0){ 
       if(!simulate_loss(loss_rate)){
         printf("ACK %d ricevuto, ricalcolo timer\n", ntohl(ack.seq_no));
-        base = ntohl(ack.seq_no);
+        base = ntohl(ack.seq_no)+1;
 
         //Azzero il contatore di tentativi di ritrasmissione in quanto se ricevo ACK il server e' vivo
         trial_counter=0;
@@ -764,7 +764,7 @@ void get(int sockfd, double timer, float loss_rate){
   memset((void *)&ack,0,sizeof(ack));
   memset((void *)&data,0,sizeof(data));
   trial_counter=0;
-  //ack.seq_no=htonl(-1);
+  ack.seq_no=htonl(-1);
 
   //Ricevo dati
   while(1){
