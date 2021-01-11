@@ -283,6 +283,7 @@ int main(int argc, char *argv[]){
           case GET:
             alarm(0);
             ack.type=htons(GET);
+            printf("Inviato ack comando\n");
             //ACK comando
             if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
@@ -328,11 +329,6 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   double sample_RTT=0, estimated_RTT=0, dev_RTT=0;
   bool dyn_timer_enable=false, timer_enable=false, RTT_sample_enable=false, FIN_sended=false;
 
-  //Pulizia
-  memset((void *)packet_buffer,0,sizeof(packet_buffer));
-  memset((void *)&ack,0,sizeof(ack));
-  memset((void *)&data,0,sizeof(data));
-  //ack.seq_no=htonl(-1);
 
   //Attivo timer dinamico
   if(timer<0){
@@ -369,6 +365,12 @@ void get(int sockfd, struct sockaddr_in addr, double timer, int window_size, flo
   lseek(fd, 0, SEEK_SET);
   file_size = lseek(fd, 0, SEEK_END);
   lseek(fd, 0, SEEK_SET);
+
+  //Pulizia
+  memset((void *)packet_buffer,0,sizeof(packet_buffer));
+  memset((void *)&ack,0,sizeof(ack));
+  memset((void *)&data,0,sizeof(data));
+  //ack.seq_no=htonl(-1);
 
   //Invio dati
   while((ntohl(ack.seq_no)+1)*497 < file_size){

@@ -768,7 +768,6 @@ void get(int sockfd, double timer, float loss_rate){
 
   //Ricevo dati
   while(1){
-
     //Se ci sono troppi errori di lettura lascio stare
     if(trial_counter>=MAX_TRIALS_NO){
       printf("Il server e' morto oppure il canale e' molto disturbato\n");
@@ -818,7 +817,11 @@ void get(int sockfd, double timer, float loss_rate){
           expected_seq_no++;
         }
       }
-      
+      //Se arriva un pacchetto fuori ordine invio l'ack con l'expected sequence number
+      else{
+        ack.type=htons(NORMAL);
+        ack.seq_no=htonl(expected_seq_no);
+      }
 
       //Invio ack
       send(sockfd, &ack, sizeof(ack), 0);
