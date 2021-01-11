@@ -283,7 +283,6 @@ int main(int argc, char *argv[]){
           case GET:
             alarm(0);
             ack.type=htons(GET);
-            printf("Inviato ack comando\n");
             //ACK comando
             if(sendto(child_sockfd, &ack, sizeof(ack), 0, (struct sockaddr *)&child_addr, sizeof(child_addr))<0){
               perror("errore sendto ack comando");
