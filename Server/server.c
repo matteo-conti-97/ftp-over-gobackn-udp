@@ -594,11 +594,7 @@ void put(int sockfd, struct sockaddr_in addr, float loss_rate, char *file_name){
           expected_seq_no++;
         }
       }
-      //Se arriva un pacchetto fuori ordine invio l'ack con l'expected sequence number
-      else{
-        ack.type=htons(NORMAL);
-        ack.seq_no=htonl(expected_seq_no);
-      }
+      
 
       //Invio ack
       sendto(sockfd, &ack, sizeof(ack), 0, (struct sockaddr *) &addr, sizeof(addr));

@@ -386,11 +386,7 @@ void list(int sockfd, double timer, float loss_rate){
           expected_seq_no++;
         }
       }
-      //Se arriva un pacchetto fuori ordine invio l'ack con l'expected sequence number
-      else{
-        ack.type=htons(NORMAL);
-        ack.seq_no=htonl(expected_seq_no);
-      }
+      
 
       //Invio ack
       send(sockfd, &ack, sizeof(ack), 0);
@@ -816,11 +812,6 @@ void get(int sockfd, double timer, float loss_rate){
           ack.seq_no=data.seq_no;
           expected_seq_no++;
         }
-      }
-      //Se arriva un pacchetto fuori ordine invio l'ack con l'expected sequence number
-      else{
-        ack.type=htons(NORMAL);
-        ack.seq_no=htonl(expected_seq_no);
       }
 
       //Invio ack
